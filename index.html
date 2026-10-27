@@ -1439,6 +1439,14 @@ form.cp-race { margin-top: 2px; }
 </div>
 <div class="toast" id="toast" hidden role="status"></div>
 <style>
+.ab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.ab-dot.ok { background: var(--rest); } .ab-dot.busy { background: var(--accent); } .ab-dot.err { background: var(--uni); }
+#acct .sheet-panel { width: min(520px, 100%); }
+.ac-row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.ac-st.error { color: var(--uni); } .ac-st.ok { color: var(--rest); }
+.ac-msg { color: var(--ink) !important; background: var(--raise); border-radius: 8px; padding: 8px 10px; }
+</style>
+<style>
 .pg-ctrl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 20px; align-items: end; }
 .pg-ctrl .seg { padding-bottom: 6px; }
 .pg-lab { font: 500 11px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
@@ -7440,6 +7448,160 @@ document.getElementById("tab-home").addEventListener("click", () => setView("hom
 
 document.getElementById("search").addEventListener("input", e => { state.q = e.target.value.trim().toLowerCase(); closedInSearch.clear(); render(); });
 try { const g = localStorage.getItem("lev-group"); if (g && (g === "All" || groups.includes(g))) state.group = g; } catch (e) {}
+
+/* ---------- Account sync (Supabase): used when Leverage runs outside Claude, e.g. on GitHub Pages ---------- */
+// Every save already lands in this browser's storage under a "lev-" key. When signed in, each of those
+// keys is also copied to the account, and newer copies from other devices are pulled back in.
+const SB_URL = "https://celuviofetdpoudnujus.supabase.co";
+const SB_KEY = "sb_publishable__nbTkJHPNnpx1K7iEN2kjA_Zb_C0HBJ";
+const SB_LIB = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js";
+const sync = { client: null, user: null, ts: {}, dirty: new Set(), timer: null, busy: false, state: "off", last: null, err: "" };
+const syncKey = k => typeof k === "string" && k.startsWith("lev-") && k !== "lev-group" && !k.startsWith("lev-sync");
+const rawGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const rawSet = Storage.prototype.setItem;
+function syncSaveTs() { try { rawSet.call(localStorage, "lev-sync-ts", JSON.stringify(sync.ts)); } catch (e) {} }
+try { sync.ts = JSON.parse(rawGet("lev-sync-ts") || "{}") || {}; } catch (e) { sync.ts = {}; }
+// Note each change to a synced key so it can be sent up
+Storage.prototype.setItem = function (k, v) {
+  rawSet.call(this, k, v);
+  if (this === localStorage && syncKey(k)) { sync.ts[k] = Date.now(); syncSaveTs(); sync.dirty.add(k); syncSoon(); }
+};
+function syncSoon() { if (!sync.user) return; clearTimeout(sync.timer); sync.timer = setTimeout(syncPush, 1500); }
+
+async function syncPush() {
+  if (!sync.user || !sync.dirty.size) return;
+  const keys = [...sync.dirty]; sync.dirty.clear();
+  const rows = keys.map(k => ({ user_id: sync.user.id, key: k, value: rawGet(k) ?? "", updated_at: new Date(sync.ts[k] || Date.now()).toISOString() }));
+  syncStatus("saving");
+  const { error } = await sync.client.from("user_data").upsert(rows, { onConflict: "user_id,key" });
+  if (error) { keys.forEach(k => sync.dirty.add(k)); syncStatus("error", error.message); clearTimeout(sync.timer); sync.timer = setTimeout(syncPush, 15000); return; }
+  sync.last = Date.now(); syncStatus("ok");
+}
+// Two devices that both trained before signing in: keep every session from each
+function mergeHistory(a, b) {
+  let A, B; try { A = JSON.parse(a) || {}; B = JSON.parse(b) || {}; } catch (e) { return b; }
+  const out = { ...A };
+  Object.keys(B).forEach(id => {
+    const seen = new Map();
+    (Array.isArray(A[id]) ? A[id] : []).concat(Array.isArray(B[id]) ? B[id] : []).forEach(s => { if (s && s.d) seen.set(s.d + "|" + (s.sid || ""), s); });
+    out[id] = [...seen.values()].sort((x, y) => (x.d < y.d ? -1 : x.d > y.d ? 1 : (x.sid || 0) - (y.sid || 0)));
+  });
+  return JSON.stringify(out);
+}
+async function syncPull() {
+  if (!sync.user || sync.busy) return;
+  sync.busy = true; syncStatus("saving");
+  try {
+    const { data, error } = await sync.client.from("user_data").select("key,value,updated_at");
+    if (error) { syncStatus("error", error.message); return; }
+    const first = rawGet("lev-sync-uid") !== sync.user.id;
+    let changed = false; const remote = new Set();
+    (data || []).forEach(row => {
+      if (!syncKey(row.key)) return;
+      remote.add(row.key);
+      const r = Date.parse(row.updated_at) || 0, l = sync.ts[row.key] || 0, local = rawGet(row.key);
+      if (local === row.value) { sync.ts[row.key] = Math.max(r, l); return; }
+      if (first && row.key === "lev-history" && local) {
+        rawSet.call(localStorage, row.key, mergeHistory(row.value, local)); sync.ts[row.key] = Date.now(); sync.dirty.add(row.key); changed = true;
+      } else if (r > l || (first && !local)) { rawSet.call(localStorage, row.key, row.value); sync.ts[row.key] = r; changed = true; }
+      else sync.dirty.add(row.key);
+    });
+    // Anything only on this device goes up
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (syncKey(k) && !remote.has(k)) { sync.dirty.add(k); if (!sync.ts[k]) sync.ts[k] = Date.now(); } }
+    syncSaveTs(); rawSet.call(localStorage, "lev-sync-uid", sync.user.id);
+    if (changed) { loadLocal(); applyTheme(); updateGymChip(); refreshAll(); }
+    sync.last = Date.now(); syncStatus("ok");
+    if (sync.dirty.size) await syncPush();
+  } catch (e) { syncStatus("error", String(e && e.message || e)); }
+  finally { sync.busy = false; }
+}
+
+function syncStatus(s, msg) { sync.state = s; sync.err = msg || ""; renderSyncBtn(); if (document.getElementById("acct") && !document.getElementById("acct").hidden) renderAcct(); }
+function renderSyncBtn() {
+  const b = document.getElementById("acct-btn"); if (!b) return;
+  b.hidden = false;
+  const dot = !sync.user ? "" : sync.state === "error" ? "err" : sync.state === "saving" ? "busy" : "ok";
+  b.querySelector(".ab-dot").className = "ab-dot " + dot;
+  b.querySelector(".t").textContent = sync.user ? (sync.state === "error" ? "Sync issue" : sync.state === "saving" ? "Syncing…" : "Synced") : "Sign in";
+}
+function acctSheet() {
+  let el = document.getElementById("acct"); if (el) return el;
+  el = document.createElement("div"); el.id = "acct"; el.className = "sheet"; el.hidden = true;
+  el.innerHTML = `<div class="sheet-back" data-aclose></div><div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="acct-title" tabindex="-1"><div id="acct-body" style="display:contents"></div></div>`;
+  document.body.appendChild(el);
+  el.addEventListener("click", async e => {
+    if (e.target.closest("[data-aclose]")) { el.hidden = true; document.body.classList.remove("sheet-open"); return; }
+    const a = e.target.closest("[data-aact]"); if (!a) return;
+    if (a.dataset.aact === "out") { await sync.client.auth.signOut(); return; }
+    if (a.dataset.aact === "now") { syncPull(); return; }
+    if (a.dataset.aact === "mode") { acctUI.mode = acctUI.mode === "in" ? "up" : "in"; acctUI.msg = ""; renderAcct(); return; }
+  });
+  el.addEventListener("submit", async e => {
+    e.preventDefault();
+    const email = el.querySelector("#ac-email").value.trim(), pw = el.querySelector("#ac-pw").value;
+    if (!email || pw.length < 6) { acctUI.msg = "Enter your email and a password of at least 6 characters."; renderAcct(); return; }
+    acctUI.msg = acctUI.mode === "in" ? "Signing in…" : "Creating your account…"; acctUI.email = email; renderAcct();
+    const res = acctUI.mode === "in"
+      ? await sync.client.auth.signInWithPassword({ email, password: pw })
+      : await sync.client.auth.signUp({ email, password: pw, options: { emailRedirectTo: location.href.split("#")[0] } });
+    if (res.error) { acctUI.msg = res.error.message; renderAcct(); return; }
+    if (acctUI.mode === "up" && !res.data.session) { acctUI.msg = "Check your email and tap the link to confirm your account, then sign in here."; acctUI.mode = "in"; renderAcct(); return; }
+    acctUI.msg = ""; renderAcct();
+  });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !el.hidden) { el.hidden = true; document.body.classList.remove("sheet-open"); } });
+  return el;
+}
+const acctUI = { mode: "in", msg: "", email: "" };
+function renderAcct() {
+  const body = document.getElementById("acct-body"); if (!body) return;
+  let h = `<div class="st-head"><div><div class="eyebrow">Account</div><h2 id="acct-title">${sync.user ? "Your data is synced" : acctUI.mode === "in" ? "Sign in to sync" : "Create an account"}</h2>
+    <div class="sub">${sync.user ? "Workouts, history, body, nutrition and settings follow you to any device you sign in on." : "Save everything you log to your account, so it's on your phone and computer and never lost with a cleared browser."}</div></div>
+    <button class="sheet-x" type="button" data-aclose aria-label="Close">✕</button></div>`;
+  if (sync.user) {
+    h += `<section class="set-sec"><div class="ac-row"><span class="label">Signed in as</span><b>${esc(sync.user.email || "")}</b></div>
+      <div class="ac-row"><span class="label">Status</span><span class="ac-st ${sync.state}">${sync.state === "error" ? "Couldn't sync: " + esc(sync.err) : sync.state === "saving" ? "Syncing…" : sync.last ? "Up to date · " + esc(new Date(sync.last).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) : "Connecting…"}</span></div>
+      <div class="set-row"><button class="btn quiet" type="button" data-aact="now">Sync now</button><button class="btn quiet" type="button" data-aact="out">Sign out</button></div>
+      <p>Signing out keeps a copy on this device.</p></section>`;
+  } else {
+    h += `<form class="set-sec" novalidate>
+      <div class="set-field"><label for="ac-email">Email</label><input class="set-in" id="ac-email" type="email" autocomplete="email" value="${esc(acctUI.email)}" required></div>
+      <div class="set-field"><label for="ac-pw">Password</label><input class="set-in" id="ac-pw" type="password" autocomplete="${acctUI.mode === "in" ? "current-password" : "new-password"}" minlength="6" required></div>
+      ${acctUI.msg ? `<p class="ac-msg">${esc(acctUI.msg)}</p>` : ""}
+      <div class="set-row"><button class="btn" type="submit">${acctUI.mode === "in" ? "Sign in" : "Create account"}</button>
+      <button class="linkbtn" type="button" data-aact="mode">${acctUI.mode === "in" ? "New here? Create an account" : "Have an account? Sign in"}</button></div>
+      <p>Anything already logged on this device is added to your account the first time you sign in.</p></form>`;
+  }
+  body.innerHTML = h;
+}
+function openAcct() { const el = acctSheet(); el.hidden = false; document.body.classList.add("sheet-open"); renderAcct(); el.querySelector(".sheet-panel").focus(); }
+
+function startAccountSync() {
+  if (typeof claude !== "undefined") return; // inside Claude, the account store already syncs
+  const hr = document.querySelector(".hdr-r"); if (!hr) return;
+  const b = document.createElement("button");
+  b.className = "setbtn"; b.id = "acct-btn"; b.type = "button"; b.hidden = true;
+  b.innerHTML = `<span class="ab-dot"></span><span class="t">Sign in</span>`;
+  b.addEventListener("click", openAcct);
+  hr.insertBefore(b, document.getElementById("set-btn"));
+  const go = () => {
+    if (!window.supabase || !window.supabase.createClient) return;
+    sync.client = window.supabase.createClient(SB_URL, SB_KEY);
+    renderSyncBtn();
+    sync.client.auth.onAuthStateChange((ev, session) => {
+      const u = session && session.user ? session.user : null;
+      const was = sync.user && sync.user.id;
+      sync.user = u;
+      if (!u) { sync.state = "off"; renderSyncBtn(); renderAcct(); return; }
+      renderSyncBtn(); renderAcct();
+      if (was !== u.id) setTimeout(syncPull, 0);
+    });
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncPull(); else syncPush(); });
+    window.addEventListener("pagehide", () => syncPush());
+  };
+  if (window.supabase) go();
+  else { const s = document.createElement("script"); s.src = SB_LIB; s.onload = go; document.head.appendChild(s); }
+}
+
 loadLocal();
 applyTheme(); updateGymChip();
 const startHash = location.hash.slice(1);
@@ -7454,6 +7616,7 @@ else if (startHash === "nutrition" || startHash === "food") setView("food");
 else if (startHash === "library" || startHash === "exercises") setView("library");
 else setView("home");
 connectStore();
+startAccountSync();
 </script>
 
 </body></html>

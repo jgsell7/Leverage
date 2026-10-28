@@ -4054,7 +4054,8 @@ function renderSettings() {
         <label class="cpick"><input type="color" id="set-act" value="${c.act}"><span>Buttons<small id="set-act-v">${c.act}</small></span></label>
       </div>
       ${contrastLine()}
-    </section>`;
+    </section>
+    ${backupSecHTML()}`;
 }
 function onSettingsClick(e) {
   if (e.target.closest("[data-close]")) { closeSettings(); return; }
@@ -7469,24 +7470,81 @@ Storage.prototype.setItem = function (k, v) {
 function syncSoon() { if (!sync.user) return; clearTimeout(sync.timer); sync.timer = setTimeout(syncPush, 1500); }
 
 async function syncPush() {
-  if (!sync.user || !sync.dirty.size) return;
+  if (!sync.user || !sync.dirty.size || sync.pushing) return;
+  sync.pushing = true;
   const keys = [...sync.dirty]; sync.dirty.clear();
-  const rows = keys.map(k => ({ user_id: sync.user.id, key: k, value: rawGet(k) ?? "", updated_at: new Date(sync.ts[k] || Date.now()).toISOString() }));
-  syncStatus("saving");
-  const { error } = await sync.client.from("user_data").upsert(rows, { onConflict: "user_id,key" });
-  if (error) { keys.forEach(k => sync.dirty.add(k)); syncStatus("error", error.message); clearTimeout(sync.timer); sync.timer = setTimeout(syncPush, 15000); return; }
-  sync.last = Date.now(); syncStatus("ok");
+  try {
+    syncStatus("saving");
+    // History merges workout by workout: fold in anything another device sent since this one last synced
+    if (keys.includes(HKEY)) {
+      const { data, error } = await sync.client.from("user_data").select("value").eq("key", HKEY).maybeSingle();
+      if (error) throw error;
+      const base = rawGet(HBASE), local = rawGet(HKEY);
+      if (data && data.value != null && data.value !== base && data.value !== local) {
+        const merged = merge3(base, local, data.value);
+        if (merged !== local) { rawSet.call(localStorage, HKEY, merged); syncReload(); }
+      }
+    }
+    const rows = keys.map(k => ({ user_id: sync.user.id, key: k, value: rawGet(k) ?? "", updated_at: new Date(sync.ts[k] || Date.now()).toISOString() }));
+    const { error } = await sync.client.from("user_data").upsert(rows, { onConflict: "user_id,key" });
+    if (error) throw error;
+    const h = rows.find(r => r.key === HKEY);
+    if (h) {
+      // Another device may have saved at the same moment; if so, combine both and save again
+      const prevBase = rawGet(HBASE);
+      let mine = h.value;
+      for (let i = 0; i < 2; i++) {
+        const { data: now, error: e2 } = await sync.client.from("user_data").select("value").eq("key", HKEY).maybeSingle();
+        if (e2 || !now || now.value === mine) break;
+        mine = merge3(prevBase, mine, now.value);
+        rawSet.call(localStorage, HKEY, mine); syncReload();
+        const { error: e3 } = await sync.client.from("user_data").upsert({ user_id: sync.user.id, key: HKEY, value: mine, updated_at: new Date().toISOString() }, { onConflict: "user_id,key" });
+        if (e3) break;
+      }
+      rawSet.call(localStorage, HBASE, mine);
+    }
+    sync.last = Date.now(); syncStatus("ok");
+  } catch (e) {
+    keys.forEach(k => sync.dirty.add(k)); syncStatus("error", String(e && e.message || e));
+    clearTimeout(sync.timer); sync.timer = setTimeout(syncPush, 15000);
+  } finally { sync.pushing = false; if (sync.dirty.size && sync.state !== "error") syncSoon(); }
 }
-// Two devices that both trained before signing in: keep every session from each
-function mergeHistory(a, b) {
-  let A, B; try { A = JSON.parse(a) || {}; B = JSON.parse(b) || {}; } catch (e) { return b; }
-  const out = { ...A };
-  Object.keys(B).forEach(id => {
-    const seen = new Map();
-    (Array.isArray(A[id]) ? A[id] : []).concat(Array.isArray(B[id]) ? B[id] : []).forEach(s => { if (s && s.d) seen.set(s.d + "|" + (s.sid || ""), s); });
-    out[id] = [...seen.values()].sort((x, y) => (x.d < y.d ? -1 : x.d > y.d ? 1 : (x.sid || 0) - (y.sid || 0)));
+// History as one entry per exercise session, so two devices' changes can be combined
+const HKEY = "lev-history", HBASE = "lev-sync-base-history";
+function histEntries(raw) {
+  const m = new Map(); let o = {};
+  try { o = JSON.parse(raw || "{}") || {}; } catch (e) { o = {}; }
+  Object.keys(o).forEach(id => {
+    const seen = {};
+    (Array.isArray(o[id]) ? o[id] : []).forEach(s => {
+      if (!s || !s.d) return;
+      const b = id + "|" + s.d + "|" + (s.sid || ""), n = seen[b] = (seen[b] || 0) + 1;
+      m.set(b + "|" + n, JSON.stringify(s));
+    });
   });
+  return m;
+}
+// Three-way merge: what this device changed and what the other changed since they last agreed both survive
+function merge3(baseRaw, localRaw, remoteRaw) {
+  const B = histEntries(baseRaw), L = histEntries(localRaw), R = histEntries(remoteRaw), out = {};
+  new Set([...B.keys(), ...L.keys(), ...R.keys()]).forEach(k => {
+    const b = B.get(k), l = L.get(k), r = R.get(k);
+    let v;
+    if (l === r) v = l;
+    else if (l === b) v = r;           // only the other device changed it
+    else if (r === b) v = l;           // only this device changed it
+    else v = l != null ? l : r;        // both changed it: keep this device's, and never lose an edited session to a delete
+    if (v == null) return;
+    const id = k.split("|")[0];
+    (out[id] = out[id] || []).push(JSON.parse(v));
+  });
+  Object.keys(out).forEach(id => out[id].sort((x, y) => (x.d < y.d ? -1 : x.d > y.d ? 1 : (x.sid || 0) - (y.sid || 0))));
   return JSON.stringify(out);
+}
+function syncReload() {
+  loadLocal(); applyTheme(); updateGymChip();
+  if (typeof typingInPlan === "function" && typingInPlan()) { storage.renderLater = true; renderCounts(); return; }
+  refreshAll();
 }
 async function syncPull() {
   if (!sync.user || sync.busy) return;
@@ -7495,26 +7553,119 @@ async function syncPull() {
     const { data, error } = await sync.client.from("user_data").select("key,value,updated_at");
     if (error) { syncStatus("error", error.message); return; }
     const first = rawGet("lev-sync-uid") !== sync.user.id;
+    if (first) { try { localStorage.removeItem(HBASE); } catch (e) {} }
     let changed = false; const remote = new Set();
     (data || []).forEach(row => {
       if (!syncKey(row.key)) return;
       remote.add(row.key);
       const r = Date.parse(row.updated_at) || 0, l = sync.ts[row.key] || 0, local = rawGet(row.key);
-      if (local === row.value) { sync.ts[row.key] = Math.max(r, l); return; }
-      if (first && row.key === "lev-history" && local) {
-        rawSet.call(localStorage, row.key, mergeHistory(row.value, local)); sync.ts[row.key] = Date.now(); sync.dirty.add(row.key); changed = true;
-      } else if (r > l || (first && !local)) { rawSet.call(localStorage, row.key, row.value); sync.ts[row.key] = r; changed = true; }
+      if (local === row.value) { sync.ts[row.key] = Math.max(r, l); if (row.key === HKEY) rawSet.call(localStorage, HBASE, row.value); return; }
+      if (row.key === HKEY) {
+        const base = rawGet(HBASE);
+        if (!local || local === base) { rawSet.call(localStorage, HKEY, row.value); sync.ts[HKEY] = r; changed = true; }
+        else if (row.value !== base) { rawSet.call(localStorage, HKEY, merge3(base, local, row.value)); sync.ts[HKEY] = Date.now(); sync.dirty.add(HKEY); changed = true; }
+        else sync.dirty.add(HKEY);
+        rawSet.call(localStorage, HBASE, row.value);
+        return;
+      }
+      if (r > l || (first && !local)) { rawSet.call(localStorage, row.key, row.value); sync.ts[row.key] = r; changed = true; }
       else sync.dirty.add(row.key);
     });
     // Anything only on this device goes up
     for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (syncKey(k) && !remote.has(k)) { sync.dirty.add(k); if (!sync.ts[k]) sync.ts[k] = Date.now(); } }
     syncSaveTs(); rawSet.call(localStorage, "lev-sync-uid", sync.user.id);
-    if (changed) { loadLocal(); applyTheme(); updateGymChip(); refreshAll(); }
+    if (changed) syncReload();
     sync.last = Date.now(); syncStatus("ok");
     if (sync.dirty.size) await syncPush();
   } catch (e) { syncStatus("error", String(e && e.message || e)); }
   finally { sync.busy = false; }
 }
+
+/* ---------- Community foods on the account (web version) ---------- */
+// One row per person holding the foods they shared; everyone can read every row, each person writes only their own.
+async function sbCommunityLoad() {
+  if (!sync.client) return;
+  const { data, error } = await sync.client.from("community_foods").select("id,foods");
+  if (error) return;
+  const all = []; let mine = [];
+  (data || []).forEach(row => {
+    let list = []; try { list = (JSON.parse(row.foods || "[]") || []).map(normCommFood).filter(Boolean); } catch (e) {}
+    if (sync.user && row.id === sync.user.id) mine = list;
+    list.forEach(f => all.push({ ...f, uid: row.id }));
+  });
+  community = all; comm.mine = mine; comm.ready = true;
+  if (ui.view === "food") refreshNuPart("res");
+}
+function sbCommunityAuth() {
+  if (sync.user) {
+    const id = sync.user.id;
+    comm.uid = id; comm.canWrite = true; comm.owner = false;
+    comm.db = { collection: () => ({ doc: () => ({
+      set: async ({ foods }) => {
+        const { error } = await sync.client.from("community_foods").upsert({ id, user_id: id, foods: JSON.stringify(foods || []), updated_at: new Date().toISOString() }, { onConflict: "id" });
+        if (error) throw error;
+      },
+      get: async () => ({ data: () => ({ foods: comm.mine }) }),
+    }) }) };
+  } else { comm.db = null; comm.uid = null; comm.canWrite = false; comm.mine = []; }
+  sbCommunityLoad();
+}
+
+/* ---------- Backup: save everything to a file, or load one (also moves data between the Claude and web versions) ---------- */
+const BK_KEYS = ["lev-plans", "lev-custom", "lev-wkmeta", "lev-history", "lev-sessions", "lev-runs", "lev-calendar", "lev-programs", "lev-body", "lev-cardio", "lev-equip", "lev-nutri", "lev-food", "lev-settings", "lev-rest"];
+function backupData() {
+  let rest = {}; try { rest = JSON.parse(rawGet("lev-rest") || "{}") || {}; } catch (e) {}
+  const v = { "lev-plans": plans, "lev-custom": custom, "lev-wkmeta": wkMeta, "lev-history": history, "lev-sessions": sessions, "lev-runs": runs,
+    "lev-calendar": calendar, "lev-programs": programs, "lev-body": body, "lev-cardio": cardio, "lev-equip": equip, "lev-nutri": nutri,
+    "lev-food": foodLog, "lev-settings": settings, "lev-rest": rest };
+  return { app: "leverage", version: 1, saved: new Date().toISOString(), data: JSON.parse(JSON.stringify(v)) };
+}
+function backupSecHTML() {
+  return `<section class="set-sec"><h3>Your data</h3>
+    <p>Save a backup file of everything you've logged, or load one. Use it to move your history between the Claude version of Leverage and the web version. Loading keeps every workout already here and adds the ones from the file; your other sections take the file's version.</p>
+    <div class="set-row"><button class="btn quiet" type="button" data-bk="export">Save backup</button><button class="btn quiet" type="button" data-bk="import">Load backup</button>
+    <input type="file" id="bk-file" accept=".json,application/json" hidden></div></section>`;
+}
+async function saveBackup() {
+  const txt = JSON.stringify(backupData()), name = `leverage-backup-${todayISO()}.json`;
+  if (typeof claude !== "undefined") {
+    let dl = null; try { dl = await claude.use("downloads"); } catch (e) {}
+    if (dl) {
+      try { await dl.save({ filename: name, data: txt }); showToast("Backup saved"); }
+      catch (e) { if (!e || e.code !== "declined") showToast("Couldn't save the backup here."); }
+      return;
+    }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([txt], { type: "application/json" })); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  showToast("Backup downloaded");
+}
+async function loadBackup(file) {
+  let o; try { o = JSON.parse(await file.text()); } catch (e) { showToast("That file isn't a Leverage backup."); return; }
+  if (!o || o.app !== "leverage" || !o.data || typeof o.data !== "object") { showToast("That file isn't a Leverage backup."); return; }
+  const before = Object.values(history).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0);
+  BK_KEYS.forEach(k => {
+    if (!(k in o.data) || o.data[k] == null) return;
+    const val = k === HKEY ? merge3("{}", JSON.stringify(history), JSON.stringify(o.data[k])) : JSON.stringify(o.data[k]);
+    try { localStorage.setItem(k, val); } catch (e) {}
+  });
+  loadLocal(); applyTheme(); updateGymChip();
+  if (storage.mode === "db") {
+    persistCustom(); WORKOUTS.forEach(w => persist(w.key)); persistHistory(); persistSessions(); persistCal(); persistPrograms();
+    persistBody(); persistCardio(); persistEquip(); persistNutri(); Object.keys(foodLog).forEach(m => persistFood(m)); persistSettings();
+  }
+  refreshAll(); renderSettings();
+  const after = Object.values(history).reduce((n, l) => n + (Array.isArray(l) ? l.length : 0), 0);
+  showToast(`Backup loaded · ${after - before} new exercise session${after - before === 1 ? "" : "s"} added`);
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-bk]"); if (!b) return;
+  if (b.dataset.bk === "export") saveBackup();
+  else { const f = document.getElementById("bk-file"); if (f) { f.value = ""; f.click(); } }
+});
+document.addEventListener("change", e => { if (e.target.id === "bk-file" && e.target.files[0]) loadBackup(e.target.files[0]); });
 
 function syncStatus(s, msg) { sync.state = s; sync.err = msg || ""; renderSyncBtn(); if (document.getElementById("acct") && !document.getElementById("acct").hidden) renderAcct(); }
 function renderSyncBtn() {
@@ -7591,11 +7742,12 @@ function startAccountSync() {
       const u = session && session.user ? session.user : null;
       const was = sync.user && sync.user.id;
       sync.user = u;
+      sbCommunityAuth();
       if (!u) { sync.state = "off"; renderSyncBtn(); renderAcct(); return; }
       renderSyncBtn(); renderAcct();
       if (was !== u.id) setTimeout(syncPull, 0);
     });
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncPull(); else syncPush(); });
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { syncPull(); sbCommunityLoad(); } else syncPush(); });
     window.addEventListener("pagehide", () => syncPush());
   };
   if (window.supabase) go();

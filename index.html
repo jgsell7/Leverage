@@ -5729,7 +5729,7 @@ function renderNuCustom() {
       ${f("nc-chol", "Cholesterol (mg)", "optional")}${f("nc-na", "Sodium (mg)", "optional")}${f("nc-k", "Potassium (mg)", "optional")}${f("nc-ca", "Calcium (mg)", "optional")}
       ${f("nc-fe", "Iron (mg)", "optional")}${f("nc-vd", "Vitamin D (mcg)", "optional")}
     </div>
-    ${canShare ? `<label class="ed-rep nu-share"><input type="checkbox" id="nc-share" checked> Share with everyone who uses Leverage, so they can find this food too</label>` : comm.db ? "" : `<p class="plan-note">Sign in to Claude to share foods with everyone. For now this saves just for you.</p>`}
+    ${canShare ? `<label class="ed-rep nu-share"><input type="checkbox" id="nc-share" checked> Share with everyone who uses Leverage, so they can find this food too</label>` : comm.db ? "" : typeof claude === "undefined" ? `<p class="plan-note">Sign in to share foods with everyone who uses Leverage. <button class="linkbtn" type="button" data-acct-open>Sign in</button> For now this saves just for you.</p>` : `<p class="plan-note">Sign in to Claude to share foods with everyone. For now this saves just for you.</p>`}
     <div class="nu-goalbtns"><button class="btn" type="submit">Save food</button><button class="linkbtn" type="button" data-ncancel>Cancel</button></div>
     <p class="plan-note">Check the numbers match your label before saving${canShare ? ", especially when sharing" : ""}. Values are per one serving.</p>
   </form>`;
@@ -7665,6 +7665,7 @@ document.addEventListener("click", e => {
   if (b.dataset.bk === "export") saveBackup();
   else { const f = document.getElementById("bk-file"); if (f) { f.value = ""; f.click(); } }
 });
+document.addEventListener("click", e => { if (e.target.closest("[data-acct-open]")) { e.preventDefault(); openAcct(); } });
 document.addEventListener("change", e => { if (e.target.id === "bk-file" && e.target.files[0]) loadBackup(e.target.files[0]); });
 
 function syncStatus(s, msg) { sync.state = s; sync.err = msg || ""; renderSyncBtn(); if (document.getElementById("acct") && !document.getElementById("acct").hidden) renderAcct(); }

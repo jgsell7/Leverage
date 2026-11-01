@@ -1441,7 +1441,9 @@ form.cp-race { margin-top: 2px; }
 <style>
 .ab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
 .ab-dot.ok { background: var(--rest); } .ab-dot.busy { background: var(--accent); } .ab-dot.err { background: var(--uni); }
-#acct .sheet-panel { width: min(520px, 100%); }
+#acct .sheet-panel, #fb .sheet-panel { width: min(520px, 100%); }
+.fb-msg { min-height: 120px; }
+.fb-ctx { font-size: 12px !important; }
 .ac-row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
 .ac-st.error { color: var(--uni); } .ac-st.ok { color: var(--rest); }
 .ac-msg { color: var(--ink) !important; background: var(--raise); border-radius: 8px; padding: 8px 10px; }
@@ -7755,6 +7757,91 @@ function startAccountSync() {
   else { const s = document.createElement("script"); s.src = SB_LIB; s.onload = go; document.head.appendChild(s); }
 }
 
+/* ---------- Feedback: a short form that sends a note to the app's owner ---------- */
+// Web version: a row in the Supabase "feedback" table (anyone can add, only the owner reads it in Supabase).
+// Claude version: a document under feedback/<viewer>/items in this artifact's store (only the owner reads others').
+const APP_VERSION = "2026-11-01";
+const FB_KINDS = [["bug", "Something's broken"], ["idea", "Idea or request"], ["other", "Other"]];
+const fbUI = { kind: "bug", msg: "", email: "", sending: false, done: false, err: "" };
+function fbDevice() {
+  const ua = navigator.userAgent || "";
+  const os = /iPhone|iPad|iPod/.test(ua) ? "iPhone/iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "Other";
+  const br = /CriOS|Chrome\//.test(ua) && !/Edg\//.test(ua) ? "Chrome" : /Edg\//.test(ua) ? "Edge" : /FxiOS|Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Other";
+  const standalone = (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone;
+  return `${os} · ${br}${standalone ? " · home screen" : ""} · ${window.innerWidth}×${window.innerHeight}`;
+}
+function fbScreen() { const t = document.querySelector('.tab[aria-selected="true"]'); return t ? t.firstChild.textContent.trim() : (ui.view || ""); }
+function fbSheet() {
+  let el = document.getElementById("fb"); if (el) return el;
+  el = document.createElement("div"); el.id = "fb"; el.className = "sheet"; el.hidden = true;
+  el.innerHTML = `<div class="sheet-back" data-fbclose></div><div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="fb-title" tabindex="-1"><div id="fb-body" style="display:contents"></div></div>`;
+  document.body.appendChild(el);
+  el.addEventListener("click", e => {
+    if (e.target.closest("[data-fbclose]")) { closeFb(); return; }
+    const k = e.target.closest("[data-fbkind]"); if (k) { fbUI.kind = k.dataset.fbkind; renderFb(); return; }
+    if (e.target.closest("[data-fbagain]")) { fbUI.done = false; fbUI.msg = ""; renderFb(); return; }
+  });
+  el.addEventListener("input", e => { if (fbUI.err) { fbUI.err = ""; const m = el.querySelector(".ac-msg"); if (m) m.remove(); } if (e.target.id === "fb-msg") fbUI.msg = e.target.value; if (e.target.id === "fb-email") fbUI.email = e.target.value; });
+  el.addEventListener("submit", e => { e.preventDefault(); sendFb(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !el.hidden) closeFb(); });
+  return el;
+}
+function openFb() {
+  const el = fbSheet(); fbUI.screen = fbScreen(); fbUI.err = "";
+  if (!fbUI.email && typeof sync !== "undefined" && sync.user && sync.user.email) fbUI.email = sync.user.email;
+  el.hidden = false; document.body.classList.add("sheet-open"); renderFb();
+  const ta = el.querySelector("#fb-msg"); if (ta) ta.focus(); else el.querySelector(".sheet-panel").focus();
+}
+function closeFb() { const el = document.getElementById("fb"); if (!el) return; el.hidden = true; document.body.classList.remove("sheet-open"); }
+function renderFb() {
+  const body = document.getElementById("fb-body"); if (!body) return;
+  let h = `<div class="st-head"><div><div class="eyebrow">Leverage</div><h2 id="fb-title">${fbUI.done ? "Thanks, got it" : "Send feedback"}</h2>
+    <div class="sub">${fbUI.done ? "Your note went straight to the person building Leverage." : "Found a bug, or wish it did something? Tell us. It goes straight to the person building Leverage."}</div></div>
+    <button class="sheet-x" type="button" data-fbclose aria-label="Close">✕</button></div>`;
+  if (fbUI.done) {
+    h += `<div class="set-row"><button class="btn" type="button" data-fbclose>Done</button><button class="btn quiet" type="button" data-fbagain>Send another</button></div>`;
+  } else {
+    h += `<form class="set-sec" novalidate>
+      <div class="set-field"><span class="pg-lab">What's it about?</span><div class="seg" role="group" aria-label="Kind of feedback">${FB_KINDS.map(([k, l]) => `<button type="button" data-fbkind="${k}" aria-pressed="${fbUI.kind === k}">${l}</button>`).join("")}</div></div>
+      <div class="set-field"><label for="fb-msg">${fbUI.kind === "bug" ? "What happened, and what did you expect?" : fbUI.kind === "idea" ? "What would make Leverage better for you?" : "Your message"}</label>
+        <textarea class="lnote fb-msg" id="fb-msg" maxlength="4000" rows="5" placeholder="${fbUI.kind === "bug" ? "e.g. I tapped Finish workout and my last set disappeared" : fbUI.kind === "idea" ? "e.g. Let me copy last week's workout in one tap" : ""}">${esc(fbUI.msg)}</textarea></div>
+      <div class="set-field"><label for="fb-email">Email for a reply (optional)</label><input class="set-in" id="fb-email" type="email" autocomplete="email" maxlength="200" value="${esc(fbUI.email)}"></div>
+      ${fbUI.err ? `<p class="ac-msg">${esc(fbUI.err)}</p>` : ""}
+      <div class="set-row"><button class="btn" type="submit"${fbUI.sending ? " disabled" : ""}>${fbUI.sending ? "Sending…" : "Send"}</button></div>
+      <p class="fb-ctx">Sent with it: the screen you're on (${esc(fbUI.screen || "–")}), your device and browser, and the app version. Nothing else.</p></form>`;
+  }
+  body.innerHTML = h;
+}
+async function sendFb() {
+  const msg = fbUI.msg.trim(), email = fbUI.email.trim();
+  if (!msg) { fbUI.err = "Write a few words first."; renderFb(); return; }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { fbUI.err = "That email doesn't look right. Fix it or leave it blank."; renderFb(); return; }
+  fbUI.sending = true; fbUI.err = ""; renderFb();
+  const row = { kind: fbUI.kind, message: msg.slice(0, 4000), email: email.slice(0, 200) || null, screen: (fbUI.screen || "").slice(0, 60), device: fbDevice().slice(0, 200), app_version: APP_VERSION };
+  try {
+    if (typeof claude !== "undefined") {
+      const [db, user] = await Promise.all([claude.use("db"), claude.use("user")]);
+      const uid = user ? await user.id() : null;
+      if (!db || !uid) throw new Error("Sign in to Claude to send feedback from here.");
+      await db.collection(`feedback/${uid}/items`).add({ ...row, created_at: new Date().toISOString() });
+    } else {
+      if (!sync.client) throw new Error("Couldn't reach Leverage's server. Check your connection and try again.");
+      const { error } = await sync.client.from("feedback").insert({ ...row, user_id: sync.user ? sync.user.id : null });
+      if (error) throw new Error("Couldn't send it. Check your connection and try again.");
+    }
+    fbUI.done = true; fbUI.msg = "";
+  } catch (e) { fbUI.err = (e && e.message) || "Couldn't send it. Try again."; }
+  fbUI.sending = false; renderFb();
+}
+function addFeedbackButton() {
+  const hr = document.querySelector(".hdr-r"); if (!hr || document.getElementById("fb-btn")) return;
+  const b = document.createElement("button");
+  b.className = "setbtn"; b.id = "fb-btn"; b.type = "button"; b.setAttribute("aria-label", "Send feedback");
+  b.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg><span class="t">Feedback</span>`;
+  b.addEventListener("click", openFb);
+  hr.insertBefore(b, document.getElementById("set-btn"));
+}
+
 loadLocal();
 applyTheme(); updateGymChip();
 const startHash = location.hash.slice(1);
@@ -7769,6 +7856,7 @@ else if (startHash === "nutrition" || startHash === "food") setView("food");
 else if (startHash === "library" || startHash === "exercises") setView("library");
 else setView("home");
 connectStore();
+addFeedbackButton();
 startAccountSync();
 </script>
 

@@ -41,3 +41,22 @@ create policy "People remove their own foods" on public.community_foods
 -- Also set in the Supabase dashboard (not SQL):
 --   Authentication → URL Configuration → Site URL and Redirect URLs: https://jgsell7.github.io/Leverage/
 --   Authentication → Sign In / Providers → Email → Confirm email: off (until a custom email service is connected)
+
+-- 3. Feedback from the in-app Feedback button.
+--    Anyone can send it (signed in or not); nobody can read it through the app. Read it in Table Editor → feedback.
+create table if not exists public.feedback (
+  id bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  user_id uuid references auth.users on delete set null,
+  email text,
+  kind text not null default 'other',
+  message text not null check (char_length(message) between 1 and 4000),
+  screen text,
+  device text,
+  app_version text
+);
+alter table public.feedback enable row level security;
+drop policy if exists "Anyone can send feedback" on public.feedback;
+create policy "Anyone can send feedback" on public.feedback
+  for insert to anon, authenticated
+  with check (user_id is null or user_id = auth.uid());

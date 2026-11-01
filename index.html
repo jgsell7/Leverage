@@ -1444,6 +1444,11 @@ form.cp-race { margin-top: 2px; }
 #acct .sheet-panel, #fb .sheet-panel { width: min(520px, 100%); }
 .fb-msg { min-height: 120px; }
 .fb-ctx { font-size: 12px !important; }
+#rpt .sheet-panel { width: min(520px, 100%); }
+.legal-links { gap: 8px 18px; }
+.ac-danger h3 { color: var(--uni); }
+.btn.danger { background: var(--uni); color: var(--surface); }
+.btn.danger:hover:not(:disabled) { background: var(--uni); filter: brightness(0.92); }
 .ac-row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
 .ac-st.error { color: var(--uni); } .ac-st.ok { color: var(--rest); }
 .ac-msg { color: var(--ink) !important; background: var(--raise); border-radius: 8px; padding: 8px 10px; }
@@ -4057,7 +4062,8 @@ function renderSettings() {
       </div>
       ${contrastLine()}
     </section>
-    ${backupSecHTML()}`;
+    ${backupSecHTML()}
+    ${aboutSecHTML()}`;
 }
 function onSettingsClick(e) {
   if (e.target.closest("[data-close]")) { closeSettings(); return; }
@@ -5456,7 +5462,8 @@ function searchFoods(q) {
   const toks = q.split(/[\s,]+/).filter(Boolean); if (!toks.length) return [];
   const out = [];
   nutri.my.forEach(f => { const l = f.name.toLowerCase(); if (toks.every(t => l.includes(t))) out.push({ src: "my:" + f.key, rank: -2000 + l.length }); });
-  community.forEach(f => { const l = (f.name + " " + f.brand).toLowerCase(); if (toks.every(t => l.includes(t))) out.push({ src: `cm:${f.uid}:${f.id}`, rank: -700 + l.length }); });
+  const hid = new Set(hiddenFoods());
+  community.forEach(f => { if (hid.has(f.uid + ":" + f.id)) return; const l = (f.name + " " + f.brand).toLowerCase(); if (toks.every(t => l.includes(t))) out.push({ src: `cm:${f.uid}:${f.id}`, rank: -700 + l.length }); });
   FOODS.forEach(f => {
     if (!toks.every(t => f.l.includes(t))) return;
     const c = FCOMMON.get(f[0]);
@@ -5711,7 +5718,7 @@ function renderNuPick() {
     <p class="nu-why"><span class="nu-tier q-${tier}">${QUAL_LABEL[tier]}</span> ${esc(qualWhy(v, r.cat, r.full))}</p>
     <div class="nu-pickb"><button class="btn" type="button" data-nadd ${g > 0 ? "" : "disabled"}>Add to ${esc(MEAL_NAME[nuUI.meal])}</button>
       ${r.mine ? `<button class="linkbtn" type="button" data-ndelmy="${esc(r.src.slice(3))}">Delete this food</button>` : ""}
-      ${r.community && (r.own || comm.owner) ? `<button class="linkbtn danger" type="button" data-ncmdel="${esc(r.src)}">${r.own ? "Remove from community" : "Remove (owner)"}</button>` : ""}</div>
+      ${r.community && (r.own || comm.owner) ? `<button class="linkbtn danger" type="button" data-ncmdel="${esc(r.src)}">${r.own ? "Remove from community" : "Remove (owner)"}</button>` : ""}${r.community && !r.own ? `<button class="linkbtn" type="button" data-ncmrpt="${esc(r.src)}">Report</button>` : ""}</div>
     ${r.community ? `<p class="plan-note nu-cmnote">Added by someone using Leverage from their nutrition label. Double-check it against your package if the numbers matter.</p>` : ""}
   </div>`;
 }
@@ -5719,7 +5726,7 @@ function renderNuCustom() {
   const f = (id, label, ph, req) => `<div class="set-field"><label for="${id}">${label}</label><input class="set-in" id="${id}" type="number" inputmode="decimal" min="0" step="any" placeholder="${ph}" ${req ? "required" : ""}></div>`;
   const canShare = comm.db && comm.canWrite;
   return `<form class="nu-custom" id="nu-custom" autocomplete="off"><h4>Add a food from its label</h4>
-    <div class="nu-scan" id="nu-scan">${nuUI.scanning ? `<span class="eq-spin" aria-hidden="true"></span><span>Reading the label… this can take up to a minute.</span>` : `<label class="btn quiet" for="nc-photo">📷 Scan the nutrition label</label><input id="nc-photo" type="file" accept="image/*" capture="environment" hidden><span class="plan-note">Take a clear, straight-on photo of the Nutrition Facts panel and the numbers fill in for you. Or type them below.</span>`}</div>
+    ${typeof claude === "undefined" ? "" : `<div class="nu-scan" id="nu-scan">${nuUI.scanning ? `<span class="eq-spin" aria-hidden="true"></span><span>Reading the label… this can take up to a minute.</span>` : `<label class="btn quiet" for="nc-photo">📷 Scan the nutrition label</label><input id="nc-photo" type="file" accept="image/*" capture="environment" hidden><span class="plan-note">Take a clear, straight-on photo of the Nutrition Facts panel and the numbers fill in for you. Or type them below.</span>`}</div>`}
     ${nuUI.scanMsg ? `<p class="eq-status">${nuUI.scanMsg}</p>` : ""}
     <div class="nu-cgrid">
       <div class="set-field"><label for="nc-name">Food name</label><input class="set-in" id="nc-name" type="text" maxlength="120" placeholder="e.g. Protein bar, cookies & cream" required value="${esc(nuUI.q)}"></div>
@@ -7688,6 +7695,8 @@ function acctSheet() {
     const a = e.target.closest("[data-aact]"); if (!a) return;
     if (a.dataset.aact === "out") { await sync.client.auth.signOut(); return; }
     if (a.dataset.aact === "now") { syncPull(); return; }
+    if (a.dataset.aact === "del") { acctUI.delOpen = !acctUI.delOpen; acctUI.delMsg = ""; renderAcct(); return; }
+    if (a.dataset.aact === "delgo") { deleteAccount(); return; }
     if (a.dataset.aact === "mode") { acctUI.mode = acctUI.mode === "in" ? "up" : "in"; acctUI.msg = ""; renderAcct(); return; }
   });
   el.addEventListener("submit", async e => {
@@ -7715,7 +7724,14 @@ function renderAcct() {
     h += `<section class="set-sec"><div class="ac-row"><span class="label">Signed in as</span><b>${esc(sync.user.email || "")}</b></div>
       <div class="ac-row"><span class="label">Status</span><span class="ac-st ${sync.state}">${sync.state === "error" ? "Couldn't sync: " + esc(sync.err) : sync.state === "saving" ? "Syncing…" : sync.last ? "Up to date · " + esc(new Date(sync.last).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) : "Connecting…"}</span></div>
       <div class="set-row"><button class="btn quiet" type="button" data-aact="now">Sync now</button><button class="btn quiet" type="button" data-aact="out">Sign out</button></div>
-      <p>Signing out keeps a copy on this device.</p></section>`;
+      <p>Signing out keeps a copy on this device.</p></section>
+      <section class="set-sec ac-danger"><h3>Delete account</h3>
+      ${acctUI.delOpen ? `<p>This permanently deletes your Leverage account, everything synced to it, and any foods you shared with the community. It also clears Leverage's data from this device. It can't be undone. Save a backup in Settings first if you want a copy.</p>
+        <div class="set-field"><label for="ac-del-confirm">Type DELETE to confirm</label><input class="set-in" id="ac-del-confirm" type="text" autocomplete="off" autocapitalize="characters"></div>
+        ${acctUI.delMsg ? `<p class="ac-msg">${esc(acctUI.delMsg)}</p>` : ""}
+        <div class="set-row"><button class="btn danger" type="button" data-aact="delgo"${acctUI.deleting ? " disabled" : ""}>Delete my account</button><button class="linkbtn" type="button" data-aact="del">Cancel</button></div>`
+      : `<p>Remove your account and all its data for good.</p><div class="set-row"><button class="linkbtn danger" type="button" data-aact="del">Delete account…</button></div>`}
+      </section>${legalLinksHTML()}`;
   } else {
     h += `<form class="set-sec" novalidate>
       <div class="set-field"><label for="ac-email">Email</label><input class="set-in" id="ac-email" type="email" autocomplete="email" value="${esc(acctUI.email)}" required></div>
@@ -7723,7 +7739,7 @@ function renderAcct() {
       ${acctUI.msg ? `<p class="ac-msg">${esc(acctUI.msg)}</p>` : ""}
       <div class="set-row"><button class="btn" type="submit">${acctUI.mode === "in" ? "Sign in" : "Create account"}</button>
       <button class="linkbtn" type="button" data-aact="mode">${acctUI.mode === "in" ? "New here? Create an account" : "Have an account? Sign in"}</button></div>
-      <p>Anything already logged on this device is added to your account the first time you sign in.</p></form>`;
+      <p>Anything already logged on this device is added to your account the first time you sign in.</p></form>${legalLinksHTML()}`;
   }
   body.innerHTML = h;
 }
@@ -7841,6 +7857,83 @@ function addFeedbackButton() {
   b.addEventListener("click", openFb);
   hr.insertBefore(b, document.getElementById("set-btn"));
 }
+
+/* ---------- App Store readiness: legal links, food reports, account deletion ---------- */
+const SITE = "https://jgsell7.github.io/Leverage/";
+function legalLinksHTML() {
+  return `<div class="set-row legal-links"><a class="linkbtn" href="${SITE}privacy.html" target="_blank" rel="noopener">Privacy policy</a><a class="linkbtn" href="${SITE}support.html" target="_blank" rel="noopener">Help &amp; support</a></div>`;
+}
+function aboutSecHTML() { return `<section class="set-sec"><h3>About</h3><p>Leverage ${APP_VERSION}. What's stored, where, and how to delete it is in the privacy policy.</p>${legalLinksHTML()}</section>`; }
+
+// Community foods a person reported stay hidden for them
+function hiddenFoods() { try { const a = JSON.parse(localStorage.getItem("lev-hidefoods") || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function hideFood(key) { const a = hiddenFoods(); if (!a.includes(key)) { a.push(key); try { localStorage.setItem("lev-hidefoods", JSON.stringify(a.slice(-500))); } catch (e) {} } }
+const RPT_REASONS = [["wrong", "Wrong numbers"], ["inappropriate", "Offensive or inappropriate"], ["spam", "Spam or duplicate"], ["other", "Something else"]];
+const rptUI = { src: null, name: "", reason: "wrong", note: "", sending: false, err: "" };
+function rptSheet() {
+  let el = document.getElementById("rpt"); if (el) return el;
+  el = document.createElement("div"); el.id = "rpt"; el.className = "sheet"; el.hidden = true;
+  el.innerHTML = `<div class="sheet-back" data-rclose></div><div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="rpt-title" tabindex="-1"><div id="rpt-body" style="display:contents"></div></div>`;
+  document.body.appendChild(el);
+  el.addEventListener("click", e => {
+    if (e.target.closest("[data-rclose]")) { closeRpt(); return; }
+    const r = e.target.closest("[data-rreason]"); if (r) { rptUI.reason = r.dataset.rreason; renderRpt(); }
+  });
+  el.addEventListener("input", e => { if (e.target.id === "rpt-note") rptUI.note = e.target.value; });
+  el.addEventListener("submit", e => { e.preventDefault(); sendRpt(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !el.hidden) closeRpt(); });
+  return el;
+}
+function openRpt(src) {
+  const [, uid, id] = src.split(":"), f = community.find(x => x.uid === uid && x.id === id); if (!f) return;
+  Object.assign(rptUI, { src, name: f.name + (f.brand ? " · " + f.brand : ""), reason: "wrong", note: "", sending: false, err: "" });
+  const el = rptSheet(); el.hidden = false; document.body.classList.add("sheet-open"); renderRpt(); el.querySelector(".sheet-panel").focus();
+}
+function closeRpt() { const el = document.getElementById("rpt"); if (el) { el.hidden = true; document.body.classList.remove("sheet-open"); } }
+function renderRpt() {
+  document.getElementById("rpt-body").innerHTML = `<div class="st-head"><div><div class="eyebrow">Community food</div><h2 id="rpt-title">Report this food</h2>
+    <div class="sub">${esc(rptUI.name)}</div></div><button class="sheet-x" type="button" data-rclose aria-label="Close">✕</button></div>
+    <form class="set-sec" novalidate>
+      <div class="set-field"><span class="pg-lab">What's wrong?</span><div class="seg" role="group" aria-label="Reason">${RPT_REASONS.map(([k, l]) => `<button type="button" data-rreason="${k}" aria-pressed="${rptUI.reason === k}">${l}</button>`).join("")}</div></div>
+      <div class="set-field"><label for="rpt-note">Details (optional)</label><textarea class="lnote" id="rpt-note" maxlength="1000" rows="3">${esc(rptUI.note)}</textarea></div>
+      ${rptUI.err ? `<p class="ac-msg">${esc(rptUI.err)}</p>` : ""}
+      <div class="set-row"><button class="btn" type="submit"${rptUI.sending ? " disabled" : ""}>${rptUI.sending ? "Sending…" : "Send report"}</button></div>
+      <p>The food is hidden for you straight away, and the report is reviewed so it can be fixed or removed for everyone.</p></form>`;
+}
+async function sendRpt() {
+  const [, owner, id] = rptUI.src.split(":");
+  rptUI.sending = true; rptUI.err = ""; renderRpt();
+  const row = { food_owner: owner, food_id: id, food_name: rptUI.name.slice(0, 200), reason: rptUI.reason, note: rptUI.note.trim().slice(0, 1000) || null };
+  try {
+    if (typeof claude !== "undefined") {
+      const [db, user] = await Promise.all([claude.use("db"), claude.use("user")]);
+      const uid = user ? await user.id() : null;
+      if (!db || !uid) throw new Error("Sign in to Claude to report a food.");
+      await db.collection(`reports/${uid}/items`).add({ ...row, created_at: new Date().toISOString() });
+    } else {
+      if (!sync.client) throw new Error("Couldn't reach Leverage's server. Check your connection and try again.");
+      const { error } = await sync.client.from("food_reports").insert({ ...row, user_id: sync.user ? sync.user.id : null });
+      if (error) throw new Error("Couldn't send the report. Check your connection and try again.");
+    }
+    hideFood(owner + ":" + id); closeRpt(); nuUI.sel = null; renderNu();
+    showToast("Thanks. That food is now hidden for you.");
+  } catch (e) { rptUI.sending = false; rptUI.err = (e && e.message) || "Couldn't send the report."; renderRpt(); }
+}
+document.addEventListener("click", e => { const r = e.target.closest("[data-ncmrpt]"); if (r) { e.preventDefault(); openRpt(r.dataset.ncmrpt); } });
+
+// Delete account (web version): removes the account and everything synced to it, then this device's copy
+async function deleteAccount() {
+  const inp = document.getElementById("ac-del-confirm");
+  if (!inp || inp.value.trim().toUpperCase() !== "DELETE") { acctUI.delMsg = "Type DELETE to confirm."; renderAcct(); return; }
+  acctUI.delMsg = "Deleting your account…"; acctUI.deleting = true; renderAcct();
+  const { error } = await sync.client.rpc("delete_my_account");
+  if (error) { acctUI.deleting = false; acctUI.delMsg = "Couldn't delete your account: " + error.message + ". Check your connection and try again, or contact support."; renderAcct(); return; }
+  clearTimeout(sync.timer); sync.dirty.clear(); sync.user = null;
+  try { await sync.client.auth.signOut(); } catch (e) {}
+  try { Object.keys(localStorage).filter(k => k.startsWith("lev-")).forEach(k => localStorage.removeItem(k)); sessionStorage.setItem("lev-deleted", "1"); } catch (e) {}
+  location.reload();
+}
+try { if (sessionStorage.getItem("lev-deleted")) { sessionStorage.removeItem("lev-deleted"); setTimeout(() => showToast("Your account and its data were deleted."), 600); } } catch (e) {}
 
 loadLocal();
 applyTheme(); updateGymChip();

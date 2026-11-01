@@ -6,4 +6,5 @@ Live at **https://jgsell7.github.io/Leverage/**
 
 - `index.html` is the whole app (screens and logic).
 - `ph/` holds the exercise photos.
+- `privacy.html` and `support.html` are the privacy policy and help pages.
 - `supabase/schema.sql` sets up the Supabase database for accounts, syncing and community foods. Run it in Supabase → SQL Editor.

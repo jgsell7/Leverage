@@ -60,3 +60,38 @@ drop policy if exists "Anyone can send feedback" on public.feedback;
 create policy "Anyone can send feedback" on public.feedback
   for insert to anon, authenticated
   with check (user_id is null or user_id = auth.uid());
+
+-- 4. Reports about community foods (the Report button). Anyone can send one; only you read them, in Table Editor → food_reports.
+create table if not exists public.food_reports (
+  id bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  user_id uuid references auth.users on delete set null,
+  food_owner text not null,
+  food_id text not null,
+  food_name text,
+  reason text not null,
+  note text check (note is null or char_length(note) <= 1000)
+);
+alter table public.food_reports enable row level security;
+drop policy if exists "Anyone can report a food" on public.food_reports;
+create policy "Anyone can report a food" on public.food_reports
+  for insert to anon, authenticated
+  with check (user_id is null or user_id = auth.uid());
+
+-- 5. In-app account deletion. Deleting the account also removes its synced data and shared foods
+--    (their tables cascade); feedback and reports it sent are kept without the link to the account.
+create or replace function public.delete_my_account()
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Not signed in';
+  end if;
+  delete from auth.users where id = auth.uid();
+end;
+$$;
+revoke all on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;

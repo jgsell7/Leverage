@@ -1449,6 +1449,10 @@ form.cp-race { margin-top: 2px; }
 .nu-qdot { background: transparent !important; box-shadow: inset 0 0 0 2px var(--muted); }
 @media (max-width: 640px) { .nu-qgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .legal-links { gap: 8px 18px; }
+.moved { background: var(--act-soft); border: 1px solid var(--act); border-radius: 14px; padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+.moved .mv-t { flex: 1 1 320px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.moved .mv-t b { font-size: 16px; } .moved .mv-t a { color: inherit; }
+.moved .mv-a { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 .ac-danger h3 { color: var(--uni); }
 .btn.danger { background: var(--uni); color: var(--surface); }
 .btn.danger:hover:not(:disabled) { background: var(--uni); filter: brightness(0.92); }
@@ -7508,7 +7512,7 @@ document.getElementById("tab-home").addEventListener("click", () => setView("hom
 document.getElementById("search").addEventListener("input", e => { state.q = e.target.value.trim().toLowerCase(); closedInSearch.clear(); render(); });
 try { const g = localStorage.getItem("lev-group"); if (g && (g === "All" || groups.includes(g))) state.group = g; } catch (e) {}
 
-/* ---------- Account sync (Supabase): used when Levered runs outside Claude, e.g. on GitHub Pages ---------- */
+/* ---------- Account sync (Supabase): used when Levered runs outside Claude, at leveredfitnessapp.com ---------- */
 // Every save already lands in this browser's storage under a "lev-" key. When signed in, each of those
 // keys is also copied to the account, and newer copies from other devices are pulled back in.
 const SB_URL = "https://celuviofetdpoudnujus.supabase.co";
@@ -7844,15 +7848,16 @@ function startAccountSync() {
       const was = sync.user && sync.user.id;
       sync.user = u;
       sbCommunityAuth();
-      if (!u) { sync.state = "off"; renderSyncBtn(); renderAcct(); return; }
+      if (!u) { sync.state = "off"; renderSyncBtn(); renderAcct(); setTimeout(moveCheck, 0); return; }
       renderSyncBtn(); renderAcct();
       if (was !== u.id) setTimeout(syncPull, 0);
+      setTimeout(moveCheck, 400);
     });
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { syncPull(); sbCommunityLoad(); } else syncPush(); });
     window.addEventListener("pagehide", () => syncPush());
   };
   if (window.supabase) go();
-  else { const s = document.createElement("script"); s.src = SB_LIB; s.onload = go; document.head.appendChild(s); }
+  else { const s = document.createElement("script"); s.src = SB_LIB; s.onload = go; s.onerror = () => moveCheck(); document.head.appendChild(s); }
 }
 
 /* ---------- Feedback: a short form that sends a note to the app's owner ---------- */
@@ -7941,7 +7946,7 @@ function addFeedbackButton() {
 }
 
 /* ---------- App Store readiness: legal links, food reports, account deletion ---------- */
-const SITE = "https://jgsell7.github.io/Leverage/";
+const SITE = "https://leveredfitnessapp.com/";
 const SUPPORT_EMAIL = "leverage.backendsupport@gmail.com";
 function legalLinksHTML() {
   return `<div class="set-row legal-links"><a class="linkbtn" href="${SITE}privacy.html" target="_blank" rel="noopener">Privacy policy</a><a class="linkbtn" href="${SITE}support.html" target="_blank" rel="noopener">Help &amp; support</a><a class="linkbtn" href="mailto:${SUPPORT_EMAIL}">Email support</a></div>`;
@@ -8017,6 +8022,62 @@ async function deleteAccount() {
   location.reload();
 }
 try { if (sessionStorage.getItem("lev-deleted")) { sessionStorage.removeItem("lev-deleted"); setTimeout(() => showToast("Your account and its data were deleted."), 600); } } catch (e) {}
+
+/* ---------- Moving from the old GitHub address to leveredfitnessapp.com ---------- */
+// Data saved without an account belongs to the address it was saved at, so people are only sent
+// straight over when nothing would be left behind: signed in (their data follows them) or nothing logged.
+const NEW_HOME = "https://leveredfitnessapp.com/";
+const mv = { done: false, checking: false, live: null };
+function onOldHost() { return location.hostname === "jgsell7.github.io" || window.__levOldHost === true; }
+function hasLocalData() {
+  try {
+    return Object.values(history).some(a => Array.isArray(a) && a.length) || (body.log && body.log.length) || Object.keys(foodLog).length > 0 ||
+      custom.length > 0 || Object.keys((cardio && cardio.log) || {}).length > 0 || ((nutri && nutri.my) || []).length > 0 || Object.keys((calendar && calendar.days) || {}).length > 0;
+  } catch (e) { return false; }
+}
+function newHomeLive() {
+  if (mv.live !== null) return Promise.resolve(mv.live);
+  return new Promise(res => {
+    const img = new Image(), t = setTimeout(() => { mv.live = false; res(false); }, 8000);
+    img.onload = () => { clearTimeout(t); mv.live = img.naturalWidth > 0; res(mv.live); };
+    img.onerror = () => { clearTimeout(t); mv.live = false; res(false); };
+    img.src = NEW_HOME + "apple-touch-icon.png?check=" + Date.now();
+  });
+}
+function goNewHome() { mv.done = true; location.replace(NEW_HOME + location.hash); }
+async function moveCheck() {
+  if (!onOldHost() || mv.done || mv.checking) return;
+  if (/access_token|type=recovery|type=signup/.test(location.hash)) return; // finish the email link here first
+  mv.checking = true;
+  try {
+    if (!(await newHomeLive())) return;
+    if (typeof sync !== "undefined" && sync.user) {
+      // Send anything still waiting, then go; the new address pulls it all back down
+      for (let i = 0; i < 40; i++) {
+        if (sync.dirty.size && !sync.pushing) syncPush();
+        if (!sync.busy && !sync.pushing && !sync.dirty.size && sync.state !== "error") { goNewHome(); return; }
+        await new Promise(r => setTimeout(r, 300));
+      }
+      showMoved(); return;
+    }
+    if (!hasLocalData()) { goNewHome(); return; }
+    showMoved();
+  } finally { mv.checking = false; }
+}
+function showMoved() {
+  if (document.getElementById("moved")) return;
+  const el = document.createElement("section");
+  el.id = "moved"; el.className = "moved"; el.setAttribute("role", "region"); el.setAttribute("aria-label", "Levered has moved");
+  el.innerHTML = `<div class="mv-t"><b>Levered has moved to <a href="${NEW_HOME}">leveredfitnessapp.com</a></b>
+    <span>This old address will stop working soon. What you've logged here isn't saved to an account yet, so bring it with you: sign in to sync it, or save a backup and load it on the new site.</span></div>
+    <div class="mv-a"><button class="btn" type="button" data-mv="sign">Sign in to sync</button><button class="btn quiet" type="button" data-mv="backup">Save backup</button><a class="linkbtn" href="${NEW_HOME}">Go to the new site</a></div>`;
+  const wrap = document.querySelector(".wrap") || document.body;
+  wrap.insertBefore(el, wrap.firstChild);
+  el.addEventListener("click", e => {
+    const b = e.target.closest("[data-mv]"); if (!b) return;
+    if (b.dataset.mv === "sign") openAcct(); else saveBackup();
+  });
+}
 
 loadLocal();
 applyTheme(); updateGymChip();

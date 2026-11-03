@@ -39,7 +39,7 @@ create policy "People remove their own foods" on public.community_foods
   for delete to authenticated using (user_id = auth.uid());
 
 -- Also set in the Supabase dashboard (not SQL):
---   Authentication → URL Configuration → Site URL and Redirect URLs: https://jgsell7.github.io/Leverage/
+--   Authentication → URL Configuration → Site URL: https://leveredfitnessapp.com, Redirect URLs: https://leveredfitnessapp.com/** (plus the old https://jgsell7.github.io/Leverage/ during the move)
 --   Authentication → Sign In / Providers → Email → Confirm email: off (until a custom email service is connected)
 
 -- 3. Feedback from the in-app Feedback button.

@@ -2,7 +2,7 @@
 
 A workout app: an exercise library organized by movement, workout logging, history and progress trends, a calendar, body tracking and nutrition.
 
-Live at **https://jgsell7.github.io/Leverage/**
+Live at **https://leveredfitnessapp.com** (hosted on Cloudflare Pages, deployed automatically from this repo).
 
 - `index.html` is the whole app (screens and logic).
 - `ph/` holds the exercise photos.

@@ -7744,12 +7744,31 @@ function acctSheet() {
     const a = e.target.closest("[data-aact]"); if (!a) return;
     if (a.dataset.aact === "out") { await sync.client.auth.signOut(); return; }
     if (a.dataset.aact === "now") { syncPull(); return; }
+    if (a.dataset.aact === "forgot") { acctUI.mode = "reset"; acctUI.msg = ""; acctUI.email = (el.querySelector("#ac-email") || {}).value || acctUI.email; renderAcct(); return; }
+    if (a.dataset.aact === "back") { acctUI.mode = "in"; acctUI.msg = ""; renderAcct(); return; }
     if (a.dataset.aact === "del") { acctUI.delOpen = !acctUI.delOpen; acctUI.delMsg = ""; renderAcct(); return; }
     if (a.dataset.aact === "delgo") { deleteAccount(); return; }
     if (a.dataset.aact === "mode") { acctUI.mode = acctUI.mode === "in" ? "up" : "in"; acctUI.msg = ""; renderAcct(); return; }
   });
   el.addEventListener("submit", async e => {
     e.preventDefault();
+    if (acctUI.mode === "reset") {
+      const em = el.querySelector("#ac-email").value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { acctUI.msg = "Enter the email you signed up with."; renderAcct(); return; }
+      acctUI.email = em; acctUI.msg = "Sending…"; renderAcct();
+      const { error } = await sync.client.auth.resetPasswordForEmail(em, { redirectTo: location.href.split("#")[0] });
+      acctUI.msg = error ? error.message : "If there's an account for that email, a reset link is on its way. Open it on this device to choose a new password.";
+      renderAcct(); return;
+    }
+    if (acctUI.mode === "newpw") {
+      const a = el.querySelector("#ac-pw").value, b = el.querySelector("#ac-pw2").value;
+      if (a.length < 6) { acctUI.msg = "Use at least 6 characters."; renderAcct(); return; }
+      if (a !== b) { acctUI.msg = "The two passwords don't match."; renderAcct(); return; }
+      acctUI.msg = "Saving…"; renderAcct();
+      const { error } = await sync.client.auth.updateUser({ password: a });
+      if (error) { acctUI.msg = error.message; renderAcct(); return; }
+      acctUI.mode = "in"; acctUI.msg = ""; renderAcct(); showToast("Password updated. You're signed in."); return;
+    }
     const email = el.querySelector("#ac-email").value.trim(), pw = el.querySelector("#ac-pw").value;
     if (!email || pw.length < 6) { acctUI.msg = "Enter your email and a password of at least 6 characters."; renderAcct(); return; }
     acctUI.msg = acctUI.mode === "in" ? "Signing in…" : "Creating your account…"; acctUI.email = email; renderAcct();
@@ -7766,6 +7785,19 @@ function acctSheet() {
 const acctUI = { mode: "in", msg: "", email: "" };
 function renderAcct() {
   const body = document.getElementById("acct-body"); if (!body) return;
+  if (acctUI.mode === "reset" || (acctUI.mode === "newpw" && sync.user)) {
+    const nw = acctUI.mode === "newpw";
+    body.innerHTML = `<div class="st-head"><div><div class="eyebrow">Account</div><h2 id="acct-title">${nw ? "Choose a new password" : "Reset your password"}</h2>
+      <div class="sub">${nw ? "Pick a new password for " + esc(sync.user.email || "your account") + "." : "Enter the email you signed up with and we'll send you a link to set a new password."}</div></div>
+      <button class="sheet-x" type="button" data-aclose aria-label="Close">✕</button></div>
+      <form class="set-sec" novalidate>
+      ${nw ? `<div class="set-field"><label for="ac-pw">New password</label><input class="set-in" id="ac-pw" type="password" autocomplete="new-password" minlength="6" required></div>
+        <div class="set-field"><label for="ac-pw2">Type it again</label><input class="set-in" id="ac-pw2" type="password" autocomplete="new-password" minlength="6" required></div>`
+      : `<div class="set-field"><label for="ac-email">Email</label><input class="set-in" id="ac-email" type="email" autocomplete="email" value="${esc(acctUI.email)}" required></div>`}
+      ${acctUI.msg ? `<p class="ac-msg">${esc(acctUI.msg)}</p>` : ""}
+      <div class="set-row"><button class="btn" type="submit">${nw ? "Save new password" : "Send reset link"}</button>${nw ? "" : `<button class="linkbtn" type="button" data-aact="back">Back to sign in</button>`}</div></form>`;
+    return;
+  }
   let h = `<div class="st-head"><div><div class="eyebrow">Account</div><h2 id="acct-title">${sync.user ? "Your data is synced" : acctUI.mode === "in" ? "Sign in to sync" : "Create an account"}</h2>
     <div class="sub">${sync.user ? "Workouts, history, body, nutrition and settings follow you to any device you sign in on." : "Save everything you log to your account, so it's on your phone and computer and never lost with a cleared browser."}</div></div>
     <button class="sheet-x" type="button" data-aclose aria-label="Close">✕</button></div>`;
@@ -7787,7 +7819,7 @@ function renderAcct() {
       <div class="set-field"><label for="ac-pw">Password</label><input class="set-in" id="ac-pw" type="password" autocomplete="${acctUI.mode === "in" ? "current-password" : "new-password"}" minlength="6" required></div>
       ${acctUI.msg ? `<p class="ac-msg">${esc(acctUI.msg)}</p>` : ""}
       <div class="set-row"><button class="btn" type="submit">${acctUI.mode === "in" ? "Sign in" : "Create account"}</button>
-      <button class="linkbtn" type="button" data-aact="mode">${acctUI.mode === "in" ? "New here? Create an account" : "Have an account? Sign in"}</button></div>
+      <button class="linkbtn" type="button" data-aact="mode">${acctUI.mode === "in" ? "New here? Create an account" : "Have an account? Sign in"}</button>${acctUI.mode === "in" ? `<button class="linkbtn" type="button" data-aact="forgot">Forgot password?</button>` : ""}</div>
       <p>Anything already logged on this device is added to your account the first time you sign in.</p></form>${legalLinksHTML()}`;
   }
   body.innerHTML = h;
@@ -7807,6 +7839,7 @@ function startAccountSync() {
     sync.client = window.supabase.createClient(SB_URL, SB_KEY);
     renderSyncBtn();
     sync.client.auth.onAuthStateChange((ev, session) => {
+      if (ev === "PASSWORD_RECOVERY") { acctUI.mode = "newpw"; acctUI.msg = ""; setTimeout(openAcct, 0); }
       const u = session && session.user ? session.user : null;
       const was = sync.user && sync.user.id;
       sync.user = u;

@@ -28,4 +28,4 @@ Last reviewed: November 2, 2026
 
 ## Logo
 
-- The Levered logo is original artwork owned by Levered.
+- The Levered logo was supplied by the app's owner.

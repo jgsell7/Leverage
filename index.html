@@ -1441,6 +1441,39 @@ form.cp-race { margin-top: 2px; }
 .ab-ic svg { width: 16px; height: 16px; }
 .ab-dot { position: absolute; right: -3px; bottom: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 2px var(--surface); }
 .ab-dot.off { display: none; }
+body { padding-bottom: 96px; }
+.help-fab { position: fixed; z-index: 25; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  display: inline-flex; align-items: center; gap: 8px; height: 48px; padding: 0 18px 0 14px; border-radius: 999px; border: 0; cursor: pointer;
+  background: var(--ink); color: var(--bg); font: 700 17px var(--font-display); text-transform: uppercase; letter-spacing: 0.04em; box-shadow: 0 6px 20px rgba(0,0,0,.22); }
+.help-fab svg { width: 22px; height: 22px; }
+.help-fab:hover { filter: brightness(1.15); }
+.help-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+body.has-bar .help-fab { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+body.sheet-open .help-fab, body.help-open .help-fab { display: none; }
+.help { position: fixed; z-index: 35; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); width: min(400px, calc(100vw - 32px)); height: min(600px, calc(100vh - 32px)); }
+.help-panel { height: 100%; display: flex; flex-direction: column; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 24px 60px rgba(0,0,0,.3); overflow: hidden; }
+.help-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 14px 12px 18px; border-bottom: 1px solid var(--line); }
+.help-head b { display: block; font: 700 22px var(--font-display); text-transform: uppercase; letter-spacing: 0.02em; line-height: 1.1; }
+.help-head span { font-size: 13px; color: var(--muted); }
+.help-log { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 16px; display: flex; flex-direction: column; gap: 12px; background: var(--bg); }
+.hm { max-width: 92%; padding: 10px 13px; border-radius: 14px; font-size: 15px; line-height: 1.45; }
+.hm p { margin: 0; } .hm p + p { margin-top: 6px; }
+.hm.bot { align-self: flex-start; background: var(--surface); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.hm.you { align-self: flex-end; background: var(--ink); color: var(--bg); border-bottom-right-radius: 4px; }
+.hm .hq { font-weight: 700; }
+.help-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.help-chips button { text-align: left; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 12px; padding: 7px 11px; font: 500 14px var(--font-body); cursor: pointer; }
+.help-chips button:hover { border-color: var(--ink); }
+.help-also { display: block; margin-top: 10px; font: 500 11px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.help-acts { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+.help-acts .btn { font-size: 15px; padding: 8px 14px; }
+.help-form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--surface); }
+.help-form .set-in { flex: 1; min-width: 0; }
+@media (max-width: 640px) {
+  .help { left: 0; right: 0; bottom: 0; width: auto; height: min(86vh, 100%); }
+  .help-panel { border-radius: 18px 18px 0 0; border-bottom: 0; padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .help-fab span { display: none; } .help-fab { width: 52px; height: 52px; padding: 0; justify-content: center; }
+}
 @media (max-width: 640px) { header { flex-wrap: nowrap; gap: 8px 10px; } header h1 { min-width: 0; } .hdr-r { flex-wrap: nowrap; gap: 6px; } }
 @media (max-width: 370px) { header h1 { flex-wrap: nowrap; gap: 0 8px; font-size: 26px; } header h1 .mark { width: 38px; } }
 .ab-dot.ok { background: var(--rest); } .ab-dot.busy { background: var(--accent); } .ab-dot.err { background: var(--uni); }
@@ -8086,6 +8119,182 @@ function showMoved() {
   });
 }
 
+/* ---------- Help chat: answers "how do I…" and "where is…" from a built-in guide (no network, no AI) ---------- */
+// Each topic: q = the question it answers, k = phrases people use for it, a = the answer, go = where "Take me there" goes.
+const HELP_TOPICS = [
+  { id: "start", q: "How do I start a workout?", go: "plans", k: ["start workout", "begin workout", "start training", "log workout", "track workout", "do a workout", "work out", "workout today", "start session", "train today"],
+    a: "Go to <b>My workouts</b>, make sure <b>Strength</b> is selected, and pick the workout you want. Tap <b>Start workout</b>, then fill in the weight and reps for each set as you go. When you're done, tap <b>Finish workout</b> to save it to History." },
+  { id: "sets", q: "How do I log my sets?", go: "plans", k: ["reps", "put in", "my reps", "enter my", "weight and reps", "how many reps i did", "log set", "enter weight", "enter reps", "record set", "add set", "log reps", "log weight", "type weight", "more sets", "extra set", "last time"],
+    a: "During a workout, each exercise has a row per set: type the <b>weight</b> and <b>reps</b> you did. The <b>Last time</b> box shows what you lifted before; tap it to copy that set. Need another set? Tap <b>+ Add a set</b>." },
+  { id: "finish", q: "How do I finish or save a workout?", go: "plans", k: ["finish workout", "save workout", "end workout", "stop workout", "done workout", "complete workout", "cancel workout", "discard workout", "workout not saving"],
+    a: "Tap <b>Finish workout</b> at the bottom of the workout. It's saved to <b>History</b> with every set, and the charts update. Changed your mind before finishing? <b>Cancel workout</b> throws that session away." },
+  { id: "warmup", q: "How do I mark a warm-up set?", go: "plans", k: ["warm up", "warmup", "warm-up set", "not count set", "dont count", "practice set"],
+    a: "Tap the <b>set number</b> on the left of a set to mark it as a warm-up. It shows a <b>W</b> and isn't counted in your stats, volume or personal records. Tap it again to make it a working set." },
+  { id: "rest", q: "How does the rest timer work?", go: "plans", k: ["rest timer", "rest time", "rest between sets", "timer", "rest alert", "how long rest", "stopwatch", "workout timer"],
+    a: "Once you've started a workout, the timer bar at the top tracks your total time and your rest. Pick a <b>rest length</b> there and you'll get an alert when it's time for the next set. Your average rest shows up in History afterwards." },
+  { id: "newwk", q: "How do I create my own workout?", go: "plans", k: ["create workout", "new workout", "make workout", "build workout", "custom workout", "add workout", "own workout", "make my own"],
+    a: "In <b>My workouts</b>, tap <b>+ New workout</b> and give it a name. Then add exercises to it from the <b>Exercise library</b>. You can rename it or use <b>Delete this workout</b> later." },
+  { id: "addex", q: "How do I add exercises to a workout?", go: "library", k: ["add exercise", "add exercises", "put exercise", "choose exercises", "pick exercises", "add to workout"],
+    a: "Open the <b>Exercise library</b> and tick the exercises you want. A bar appears at the bottom: choose which workout under <b>Add to</b>, then tap <b>Add to workout</b>." },
+  { id: "editwk", q: "How do I reorder, remove or change exercises in a workout?", go: "plans", k: ["reorder", "move exercise", "remove exercise", "delete exercise", "change order", "edit workout", "sets and reps", "change sets", "change reps", "target reps", "swap exercise", "replace exercise"],
+    a: "In <b>My workouts</b>, open the workout. Use the <b>↑ ↓</b> arrows to change the order and <b>✕</b> to remove an exercise. Set the number of sets and target reps on each exercise. To swap one, remove it and add the replacement from the Exercise library." },
+  { id: "deletewk", q: "How do I delete or rename a workout?", go: "plans", k: ["delete workout", "remove workout", "rename workout", "workout name", "change name"],
+    a: "In <b>My workouts</b>, pick the workout, then use <b>Rename</b> or <b>Delete this workout</b>. Deleting a workout doesn't remove the sessions you already finished; they stay in History." },
+  { id: "coach", q: "What does the Coach do?", go: "plans", k: ["coach", "suggest weight", "what weight", "how much weight", "recommend weight", "goal", "bulk", "cut", "strength goal", "hypertrophy", "fill in", "progressive overload"],
+    a: "In <b>My workouts</b>, pick a goal for the workout (like bulk, cut or strength). The <b>Coach</b> then suggests a weight and reps for each exercise based on what you've done before, and adjusts set by set as you log. Tap <b>Fill in</b> to use its suggestion." },
+  { id: "fd", q: "Are there ready-made workouts?", go: "fd", k: ["foundations", "ready made", "premade", "pre made", "template", "beginner", "program", "plan for me", "proven plan", "routine", "split"],
+    a: "Yes: open <b>Foundations</b> for eight ready-made workouts (full body, chest, back, shoulders, arms, legs, glutes and core). Each exercise explains what it works and how to do it. Tap <b>Copy to My Workouts</b> to make one yours." },
+  { id: "equip", q: "Can it build a workout from my equipment?", go: "plans", k: ["equipment", "home gym", "what i have", "dumbbells only", "no gym", "bodyweight only", "my equipment", "available equipment"],
+    a: "Yes. In <b>My workouts</b>, choose <b>From my equipment</b>, then describe what you have (or tap <b>I only have my bodyweight</b>). It builds workouts from that. Tap <b>Shuffle all</b> for new picks and <b>Save to My Workouts</b> to keep one." },
+  { id: "cardio", q: "How do I log cardio or follow a race plan?", go: "plans", k: ["cardio", "run", "running", "marathon", "half marathon", "hyrox", "ironman", "triathlon", "bike", "cycling", "swim", "row", "walk", "race"],
+    a: "In <b>My workouts</b>, choose <b>Cardio &amp; race training</b>. Log runs, rides, swims, rows and more, or follow a full plan for HYROX, half and full marathons, half Ironman or Ironman." },
+  { id: "library", q: "How do I find an exercise?", go: "library", k: ["hamstring", "chest exercise", "back exercise", "leg exercise", "glute", "bicep", "tricep", "shoulder exercise", "quad", "abs", "core exercise", "exercise for", "find exercise", "search exercise", "exercise library", "look up exercise", "exercises for", "muscle", "filter", "variation", "how to do", "instructions", "form", "photos", "pictures"],
+    a: "Open the <b>Exercise library</b>. Search by name or muscle (like \"incline\" or \"hamstrings\"), pick a movement group, or filter by equipment. Tap an exercise to see its variations, start-and-end photos, step-by-step instructions and your history with it." },
+  { id: "history", q: "Where do I see my past workouts?", go: "days", k: ["history", "past workouts", "previous workouts", "old workouts", "what did i do", "last week", "workout log", "see workouts", "find workout"],
+    a: "Open <b>History</b>. Every finished workout is listed by day; tap a day to see each set, weight, rep and target. Tap an exercise name for its all-time stats." },
+  { id: "progress", q: "How do I see my progress over time?", go: "prog", k: ["progress", "trend", "improvement", "getting stronger", "chart", "graph", "over time", "weekly", "monthly", "projection", "forecast", "average weight", "heaviest"],
+    a: "Open <b>Progress</b> and pick an exercise. Choose <b>Day</b>, <b>Week</b> or <b>Month</b>, then a measure: average weight, heaviest, estimated 1-rep max, volume, average reps or most reps. The dotted trend line projects 4 weeks to 6 months ahead." },
+  { id: "pr", q: "How do personal records and 1-rep max work?", go: "prog", k: ["pr", "personal record", "personal best", "one rep max", "1rm", "1 rep max", "max", "best set", "record"],
+    a: "A set gets a <b>PR</b> badge when it beats every earlier one for that exercise, by weight or estimated 1-rep max. The estimated 1-rep max uses the Epley formula from your heaviest sets. See them in <b>History</b> (tap an exercise) or in <b>Progress</b>." },
+  { id: "cal", q: "How do I plan my week?", go: "cal", k: ["calendar", "plan week", "schedule", "plan day", "rest day", "repeat weekly", "every week", "plan ahead", "weekly plan"],
+    a: "Open <b>Calendar</b> and tap a day. Add a workout, a rest day, cardio or your own note, and tick repeat to have it every week. Planned workouts show up first when you go to start a workout that day." },
+  { id: "body", q: "How do I log my body weight?", go: "body", k: ["bodyweight", "log my weight", "track my weight", "scale", "body weight", "weigh in", "weigh-in", "my weight", "log weight", "track weight", "height", "bmi", "lose weight progress"],
+    a: "Open <b>Body</b>, enter today's weight and tap <b>Save weigh-in</b>. Add your height there too, and turn on BMI if you want it. Your trend line shows how your weight is moving." },
+  { id: "food", q: "How do I log food?", go: "food", k: ["log food", "add food", "track food", "calories", "what i ate", "meal", "breakfast", "lunch", "dinner", "snack", "nutrition", "diet", "eat"],
+    a: "Open <b>Nutrition</b> and search for the food (like \"chicken breast\" or \"banana\"). Pick it, choose the amount and the meal, and tap <b>Add</b>. Your calories, protein, carbs and fat add up for the day." },
+  { id: "quick", q: "How do I log food that isn't in the list or has no label?", go: "food", k: ["quick add", "not in the list", "cant find food", "no label", "homemade", "restaurant", "manual calories", "enter calories", "enter macros", "custom calories", "estimate"],
+    a: "In <b>Nutrition</b>, under the search, tap <b>Quick add calories &amp; macros</b>. Enter a name (optional), the meal, and your calories, protein, carbs and fat. Leave calories blank to work them out from the macros. Tick the box to save it for next time." },
+  { id: "label", q: "How do I add a food from its nutrition label?", go: "food", k: ["food from label", "from nutrition label", "from the label", "from its label", "nutrition facts", "nutrition label", "food label", "add my own food", "custom food", "new food", "create food", "scan label", "scan food", "barcode"],
+    a: "In <b>Nutrition</b>, tap <b>Add a food from its label</b> and type in the values from the Nutrition Facts panel. You can share it so everyone using Levered can find it. Scanning a label with your camera works in the Claude version of Levered; there's no barcode scanner yet." },
+  { id: "targets", q: "How do I set calorie and protein targets?", go: "food", k: ["calories should i eat", "how much should i eat", "calories per day", "target", "calorie goal", "protein goal", "macro goal", "daily target", "how many calories", "macros", "goal calories", "lose fat", "build muscle", "maintain"],
+    a: "In <b>Nutrition</b>, tap <b>Set a daily target</b>. Enter your calories and, if you like, protein, carbs and fat, or tap <b>Suggest from my weight</b> to get targets from your goal and your latest weight in Body." },
+  { id: "delfood", q: "How do I remove a food I logged?", go: "food", k: ["remove food", "delete food", "wrong food", "undo food", "remove entry", "delete entry", "mistake"],
+    a: "In <b>Nutrition</b>, find the entry under its meal and tap the <b>✕</b> next to it. Removed it by mistake? Tap <b>Undo</b> on the message that appears." },
+  { id: "community", q: "What are community foods, and how do I report one?", go: "food", k: ["community food", "shared food", "report food", "wrong numbers", "bad food", "inappropriate", "spam food"],
+    a: "Community foods are added by people using Levered from their nutrition labels. If one looks wrong or inappropriate, open it in <b>Nutrition</b> and tap <b>Report</b>. It's hidden for you straight away and reviewed for everyone." },
+  { id: "account", q: "How do I create an account or sign in?", go: "account", k: ["account", "sign up", "signup", "sign in", "signin", "log in", "login", "register", "create account", "make account"],
+    a: "Tap the <b>person icon</b> at the top of the app. To make an account, tap <b>New here? Create an account</b> and enter your email and a password; then confirm from the email we send. Anything you've already logged comes with you." },
+  { id: "sync", q: "How does syncing work?", go: "account", k: ["sync", "syncing", "other device", "new phone", "laptop", "computer", "backup", "back up", "not syncing", "lost data", "save data", "data gone"],
+    a: "When you're signed in, everything you log saves to your account a moment later and shows up on any device you sign in on. The person icon shows a <b>green dot</b> when you're synced. Not signed in? Your data lives only on this device, so create an account to keep it safe." },
+  { id: "forgot", q: "I forgot my password", go: "account", k: ["forgot password", "reset password", "change password", "lost password", "cant sign in", "locked out", "wrong password", "new password"],
+    a: "Tap the <b>person icon</b>, then <b>Forgot password?</b>, and enter your email. Open the link we send <b>on this device</b> and choose a new password. No email after a few minutes? Check your spam folder." },
+  { id: "signout", q: "How do I sign out?", go: "account", k: ["sign out", "signout", "log out", "logout", "switch account", "different account"],
+    a: "Tap the <b>person icon</b> at the top, then <b>Sign out</b>. A copy of your data stays on this device." },
+  { id: "delacct", q: "How do I delete my account?", go: "account", k: ["delete my account", "remove my account", "get rid of my account", "deactivate", "delete account", "remove account", "close account", "delete my data", "erase data", "cancel account"],
+    a: "Tap the <b>person icon</b>, then <b>Delete account…</b>, type DELETE and confirm. That permanently deletes your account, everything synced to it and any foods you shared, and clears Levered from this device. Want a copy first? Use <b>Save backup</b> in Settings." },
+  { id: "backupx", q: "How do I move my data or make a backup file?", go: "settings", k: ["backup file", "export", "import", "download data", "move data", "transfer", "claude version", "load backup", "save backup"],
+    a: "Open <b>Settings</b> (the sliders icon) and go to <b>Your data</b>. <b>Save backup</b> downloads a file of everything; <b>Load backup</b> brings one in, keeping the workouts already there and adding the ones from the file. Signing in with the same account is usually easier." },
+  { id: "settings", q: "How do I change colours, dark mode or my gym?", go: "settings", k: ["settings", "dark mode", "light mode", "theme", "colour", "color", "my gym", "gym address", "directions", "appearance"],
+    a: "Tap the <b>sliders icon</b> at the top for Settings. Pick a colour theme, or <b>Match my device</b> for automatic light and dark mode, or set your own colours. Add your main gym there for a one-tap directions link at the top." },
+  { id: "units", q: "Can I use kilograms?", go: null, k: ["kg", "kilograms", "kilos", "metric", "units", "pounds", "lbs", "change units"],
+    a: "Right now Levered uses <b>pounds (lb)</b> for weights. Kilograms aren't available yet; tell us with the Feedback button if you'd like them, since requests decide what's built next." },
+  { id: "nav", q: "Where is everything? How do I get around?", go: "home", k: ["menu", "where is", "navigate", "find section", "tabs", "sections", "get around", "home page", "main page", "lost"],
+    a: "Levered has these sections: <b>Home</b>, <b>Exercise library</b>, <b>Foundations</b>, <b>My workouts</b>, <b>History</b>, <b>Progress</b>, <b>Calendar</b>, <b>Body</b> and <b>Nutrition</b>. On a computer they're in the menu on the left; on a phone, tap the <b>Section</b> menu near the top. Feedback, your account and Settings are the icons at the top right." },
+  { id: "install", q: "How do I put Levered on my home screen?", go: null, k: ["home screen", "install", "download app", "app icon", "add to home", "get the app", "app store", "iphone app", "android app"],
+    a: "On iPhone, open leveredfitnessapp.com in Safari, tap <b>Share</b>, then <b>Add to Home Screen</b>. On Android in Chrome, tap <b>⋮</b>, then <b>Add to Home screen</b>. It then opens like an app. An App Store version is on the way." },
+  { id: "offline", q: "Does it work without internet?", go: null, k: ["offline", "no internet", "no signal", "no wifi", "airplane mode", "bad connection", "basement"],
+    a: "Yes. Everything you log saves on your phone straight away, so you can keep logging with no signal. If you're signed in, it syncs as soon as you're back online." },
+  { id: "feedback", q: "How do I report a bug or contact support?", go: "feedback", k: ["feedback", "bug", "broken", "problem", "issue", "not working", "contact", "support", "help me", "suggestion", "feature request", "email you", "talk to someone", "human"],
+    a: "Tap the <b>speech-bubble icon</b> at the top to send feedback straight to the person building Levered. Pick bug, idea or other, and leave your email if you'd like a reply. You can also email <b>leverage.backendsupport@gmail.com</b>." },
+  { id: "privacy", q: "Is my data private?", go: "settings", k: ["privacy", "private", "who can see", "data safe", "secure", "security", "sell data", "privacy policy"],
+    a: "Your synced data can only be read by your own signed-in account. It's never sold or used for ads. The full privacy policy is linked under <b>Settings → About</b>." },
+  { id: "cost", q: "Does Levered cost anything?", go: null, k: ["cost", "price", "free", "pay", "subscription", "premium", "money"],
+    a: "Levered is free to use right now." },
+];
+const HELP_STOP = new Set("a an the i im me my we our to of for in on at is it its do does did doing how can where what why when which who would could should please help with and or be am are was there this that these you your get see find show tell want need levered app use using just any some there here way".split(" "));
+// Words people use for the same thing, folded together before matching
+const HELP_PHRASES = [[/\b(log|logg|sign)(ed|ing)? ?in\b/g, "signin"], [/\b(log|sign)(ed|ing)? ?out\b/g, "signout"], [/\bsign ?up\b/g, "signup"], [/\b(take|took) (\w+ ){0,3}(out|off)\b/g, "remove"], [/\bget rid of\b/g, "remove"],
+  [/\b(cant|can t|cannot|unable to|wont|won t|not able to)\b/g, "cant"], [/\b(real person|someone|somebody|a human|human)\b/g, "support"], [/\bhow much\b/g, "amount"], [/\bone rep max\b|\b1 ?rm\b/g, "onerepmax"]];
+const HELP_SYN = { lift: "weight", lifted: "weight", lifting: "weight", weights: "weight", heavy: "weight", lb: "weight", type: "log", enter: "log", input: "log", record: "log", write: "log", put: "log", add: "add", routine: "workout", session: "workout", training: "workout", exercise: "exercise", exercises: "exercise",
+  erase: "remove", delete: "remove", deleting: "remove", deleted: "remove", phone: "device", phones: "device", laptop: "device", computer: "device", ipad: "device", tablet: "device", devices: "device", contact: "support", email: "support", login: "signin", signin: "signin", logout: "signout", register: "signup",
+  macro: "macros", carb: "carbs", kilo: "kg", kilos: "kg", kilogram: "kg", kilograms: "kg", metric: "kg", ate: "eat", eating: "eat", food: "food", foods: "food", meals: "meal", schedule: "calendar", planner: "calendar", bodyweight: "bodyweight", stronger: "strength", improve: "progress", improving: "progress", gains: "progress" };
+const helpStem = w => w.length > 4 ? w.replace(/(ing|ed|es|s)$/, "") : w.length > 3 ? w.replace(/s$/, "") : w;
+function helpTokens(t) {
+  let x = " " + t.toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9]+/g, " ") + " ";
+  HELP_PHRASES.forEach(([re, to]) => { x = x.replace(re, " " + to + " "); });
+  return x.split(/\s+/).filter(w => w && !HELP_STOP.has(w)).map(w => HELP_SYN[w] || w).map(w => HELP_SYN[helpStem(w)] || helpStem(w));
+}
+HELP_TOPICS.forEach(t => {
+  t._k = t.k.map(k => new Set(helpTokens(k))).filter(k => k.size);
+  t._w = new Set(helpTokens(t.q + " " + t.k.join(" ")));
+  t._a = new Set(helpTokens(t.a.replace(/<[^>]+>/g, " ")));
+});
+const HELP_DF = {};
+HELP_TOPICS.forEach(t => t._w.forEach(w => { HELP_DF[w] = (HELP_DF[w] || 0) + 1; }));
+const helpIdf = w => Math.log(1 + HELP_TOPICS.length / (HELP_DF[w] || HELP_TOPICS.length));
+function helpMatch(text) {
+  const q = new Set(helpTokens(text));
+  return HELP_TOPICS.map(t => {
+    let s = 0;
+    t._k.forEach(k => { if ([...k].every(w => q.has(w))) s += k.size > 1 ? 1.5 * k.size : 1; });
+    q.forEach(w => { if (t._w.has(w)) s += helpIdf(w); else if (t._a.has(w)) s += 0.35 * helpIdf(w); });
+    return { t, s };
+  }).filter(x => x.s > 0).sort((a, b) => b.s - a.s);
+}
+const HELP_GO = { plans: "My workouts", library: "Exercise library", fd: "Foundations", days: "History", prog: "Progress", cal: "Calendar", body: "Body", food: "Nutrition", home: "Home", settings: "Settings", account: "your account", feedback: "Feedback" };
+const helpUI = { open: false, msgs: [] };
+const HELP_START = ["start", "food", "progress", "sync", "quick", "nav"];
+function helpSheet() {
+  let el = document.getElementById("help"); if (el) return el;
+  el = document.createElement("div"); el.id = "help"; el.className = "help"; el.hidden = true;
+  el.innerHTML = `<div class="help-panel" role="dialog" aria-modal="false" aria-labelledby="help-title">
+    <div class="help-head"><div><b id="help-title">Levered Help</b><span>Ask how to do anything in the app</span></div><button class="sheet-x" type="button" data-hclose aria-label="Close help">✕</button></div>
+    <div class="help-log" id="help-log" aria-live="polite"></div>
+    <form class="help-form" id="help-form" autocomplete="off"><label class="sr-only" for="help-q">Your question</label>
+      <input class="set-in" id="help-q" type="text" maxlength="300" placeholder="e.g. How do I add a warm-up set?"><button class="btn" type="submit">Ask</button></form>
+  </div>`;
+  document.body.appendChild(el);
+  el.addEventListener("click", e => {
+    if (e.target.closest("[data-hclose]")) { closeHelp(); return; }
+    const t = e.target.closest("[data-htopic]"); if (t) { const tp = HELP_TOPICS.find(x => x.id === t.dataset.htopic); if (tp) helpAsk(tp.q, tp); return; }
+    const g = e.target.closest("[data-hgo]"); if (g) { helpGo(g.dataset.hgo); return; }
+    if (e.target.closest("[data-hfb]")) { const last = [...helpUI.msgs].reverse().find(m => m.who === "you"); closeHelp(); openFb(); fbUI.kind = "other"; fbUI.msg = last ? "Question from Help: " + last.text : ""; renderFb(); }
+  });
+  el.querySelector("#help-form").addEventListener("submit", e => { e.preventDefault(); const q = el.querySelector("#help-q"); const v = q.value.trim(); if (!v) return; q.value = ""; helpAsk(v); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !el.hidden) closeHelp(); });
+  return el;
+}
+function helpChips(ids) { return `<div class="help-chips">${ids.map(id => { const t = HELP_TOPICS.find(x => x.id === id); return t ? `<button type="button" data-htopic="${t.id}">${esc(t.q)}</button>` : ""; }).join("")}</div>`; }
+function renderHelp() {
+  const log = document.getElementById("help-log"); if (!log) return;
+  let h = `<div class="hm bot"><p>Hi! Ask me how to do anything in Levered, or where to find it. Try one of these:</p>${helpChips(HELP_START)}</div>`;
+  helpUI.msgs.forEach(m => {
+    if (m.who === "you") { h += `<div class="hm you"><p>${esc(m.text)}</p></div>`; return; }
+    if (!m.t) { h += `<div class="hm bot"><p>I'm not sure about that one. Try asking another way, pick a topic below, or send your question to the person building Levered.</p>${helpChips(m.alts.length ? m.alts : HELP_START.slice(0, 4))}<div class="help-acts"><button class="linkbtn" type="button" data-hfb>Ask a person instead</button></div></div>`; return; }
+    const go = m.t.go && HELP_GO[m.t.go] && !(m.t.go === "account" && typeof claude !== "undefined");
+    h += `<div class="hm bot"><p class="hq">${esc(m.t.q)}</p><p>${m.t.a}</p>${go ? `<div class="help-acts"><button class="btn quiet" type="button" data-hgo="${m.t.go}">Take me to ${esc(HELP_GO[m.t.go])}</button></div>` : ""}${m.alts.length ? `<span class="help-also">Related</span>${helpChips(m.alts)}` : ""}</div>`;
+  });
+  log.innerHTML = h;
+  log.scrollTop = log.scrollHeight;
+}
+function helpAsk(text, topic) {
+  helpUI.msgs.push({ who: "you", text });
+  const res = topic ? [{ t: topic, s: 99 }].concat(helpMatch(text).filter(x => x.t !== topic)) : helpMatch(text);
+  const best = res[0] && res[0].s >= 2 ? res[0].t : null;
+  const alts = res.filter(x => x.t !== best && x.s >= 2).slice(0, best ? 2 : 3).map(x => x.t.id);
+  helpUI.msgs.push({ who: "bot", t: best, alts });
+  if (helpUI.msgs.length > 40) helpUI.msgs.splice(0, helpUI.msgs.length - 40);
+  renderHelp();
+}
+function helpGo(v) {
+  closeHelp();
+  if (v === "settings") { openSettings(); return; }
+  if (v === "account") { if (typeof openAcct === "function" && typeof claude === "undefined") openAcct(); return; }
+  if (v === "feedback") { openFb(); return; }
+  if (v === "plans") ui.wsec = ui.wsec || "strength";
+  setView(v);
+}
+function openHelp() { const el = helpSheet(); el.hidden = false; document.body.classList.add("help-open"); renderHelp(); const q = el.querySelector("#help-q"); if (q && window.innerWidth > 640) q.focus(); }
+function closeHelp() { const el = document.getElementById("help"); if (el) { el.hidden = true; document.body.classList.remove("help-open"); } const b = document.getElementById("help-fab"); if (b) b.focus({ preventScroll: true }); }
+function addHelpButton() {
+  if (document.getElementById("help-fab")) return;
+  const b = document.createElement("button");
+  b.id = "help-fab"; b.className = "help-fab"; b.type = "button"; b.setAttribute("aria-label", "Help");
+  b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.9-2.7 2.4-2.7 4"/><path d="M12 17.6h.01"/></svg><span>Help</span>`;
+  b.addEventListener("click", () => { const el = document.getElementById("help"); if (el && !el.hidden) closeHelp(); else openHelp(); });
+  document.body.appendChild(b);
+}
+
 loadLocal();
 applyTheme(); updateGymChip();
 const startHash = location.hash.slice(1);
@@ -8101,6 +8310,7 @@ else if (startHash === "library" || startHash === "exercises") setView("library"
 else setView("home");
 connectStore();
 addFeedbackButton();
+addHelpButton();
 startAccountSync();
 </script>
 

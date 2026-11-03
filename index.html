@@ -1437,7 +1437,12 @@ form.cp-race { margin-top: 2px; }
 </div>
 <div class="toast" id="toast" hidden role="status"></div>
 <style>
-.ab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.ab-ic { position: relative; display: inline-flex; flex: none; }
+.ab-ic svg { width: 16px; height: 16px; }
+.ab-dot { position: absolute; right: -3px; bottom: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 2px var(--surface); }
+.ab-dot.off { display: none; }
+@media (max-width: 640px) { header { flex-wrap: nowrap; gap: 8px 10px; } header h1 { min-width: 0; } .hdr-r { flex-wrap: nowrap; gap: 6px; } }
+@media (max-width: 370px) { header h1 { flex-wrap: nowrap; gap: 0 8px; font-size: 26px; } header h1 .mark { width: 38px; } }
 .ab-dot.ok { background: var(--rest); } .ab-dot.busy { background: var(--accent); } .ab-dot.err { background: var(--uni); }
 #acct .sheet-panel, #fb .sheet-panel { width: min(520px, 100%); }
 .fb-msg { min-height: 120px; }
@@ -7734,7 +7739,8 @@ function syncStatus(s, msg) { sync.state = s; sync.err = msg || ""; renderSyncBt
 function renderSyncBtn() {
   const b = document.getElementById("acct-btn"); if (!b) return;
   b.hidden = false;
-  const dot = !sync.user ? "" : sync.state === "error" ? "err" : sync.state === "saving" ? "busy" : "ok";
+  const dot = !sync.user ? "off" : sync.state === "error" ? "err" : sync.state === "saving" ? "busy" : "ok";
+  b.setAttribute("aria-label", !sync.user ? "Sign in" : sync.state === "error" ? "Account: sync issue" : "Account: synced");
   b.querySelector(".ab-dot").className = "ab-dot " + dot;
   b.querySelector(".t").textContent = sync.user ? (sync.state === "error" ? "Sync issue" : sync.state === "saving" ? "Syncing…" : "Synced") : "Sign in";
 }
@@ -7835,7 +7841,8 @@ function startAccountSync() {
   const hr = document.querySelector(".hdr-r"); if (!hr) return;
   const b = document.createElement("button");
   b.className = "setbtn"; b.id = "acct-btn"; b.type = "button"; b.hidden = true;
-  b.innerHTML = `<span class="ab-dot"></span><span class="t">Sign in</span>`;
+  b.setAttribute("aria-label", "Account");
+  b.innerHTML = `<span class="ab-ic"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="5.5" r="2.75"/><path d="M2.75 14c.6-2.7 2.7-4.25 5.25-4.25S12.65 11.3 13.25 14"/></svg><span class="ab-dot"></span></span><span class="t">Sign in</span>`;
   b.addEventListener("click", openAcct);
   hr.insertBefore(b, document.getElementById("set-btn"));
   const go = () => {

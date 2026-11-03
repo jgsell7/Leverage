@@ -1,0 +1,4 @@
+# Keep repo notes off the public site (Cloudflare Pages). This file itself is not served.
+/README.md / 302
+/CREDITS.md / 302
+/supabase/* / 302

@@ -1,4 +1,4 @@
--- Leverage database setup for Supabase.
+-- Levered database setup for Supabase.
 -- Run this whole file in Supabase → SQL Editor to (re)create everything the app needs.
 -- Safe to run more than once.
 

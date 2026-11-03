@@ -1,4 +1,4 @@
-# Leverage
+# Levered
 
 A workout app: an exercise library organized by movement, workout logging, history and progress trends, a calendar, body tracking and nutrition.
 

@@ -7911,8 +7911,9 @@ function addFeedbackButton() {
 
 /* ---------- App Store readiness: legal links, food reports, account deletion ---------- */
 const SITE = "https://jgsell7.github.io/Leverage/";
+const SUPPORT_EMAIL = "leverage.backendsupport@gmail.com";
 function legalLinksHTML() {
-  return `<div class="set-row legal-links"><a class="linkbtn" href="${SITE}privacy.html" target="_blank" rel="noopener">Privacy policy</a><a class="linkbtn" href="${SITE}support.html" target="_blank" rel="noopener">Help &amp; support</a></div>`;
+  return `<div class="set-row legal-links"><a class="linkbtn" href="${SITE}privacy.html" target="_blank" rel="noopener">Privacy policy</a><a class="linkbtn" href="${SITE}support.html" target="_blank" rel="noopener">Help &amp; support</a><a class="linkbtn" href="mailto:${SUPPORT_EMAIL}">Email support</a></div>`;
 }
 function aboutSecHTML() { return `<section class="set-sec"><h3>About</h3><p>Leverage ${APP_VERSION}. What's stored, where, and how to delete it is in the privacy policy.</p>${legalLinksHTML()}</section>`; }
 

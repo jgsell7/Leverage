@@ -1441,6 +1441,16 @@ form.cp-race { margin-top: 2px; }
 .ab-ic svg { width: 16px; height: 16px; }
 .ab-dot { position: absolute; right: -3px; bottom: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 2px var(--surface); }
 .ab-dot.off { display: none; }
+.runlog { margin-top: 8px; max-width: 680px; display: flex; flex-direction: column; gap: 8px; }
+.rl-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 14px; align-items: end; }
+.rl-f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rl-f label, .rl-k { font: 500 11px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.rl-pace, .rl-goal { font: 600 16px var(--font-mono); font-variant-numeric: tabular-nums; padding: 7px 0; }
+.rl-tip { margin: 0; }
+.rgoals { flex-wrap: wrap; }
+.rgoals .num { width: 64px; }
+.rgoals .rgt { width: 76px; }
+@media (max-width: 640px) { .rl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 body { padding-bottom: 96px; }
 .help-fab { position: fixed; z-index: 25; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   display: inline-flex; align-items: center; gap: 8px; height: 48px; padding: 0 18px 0 14px; border-radius: 999px; border: 0; cursor: pointer;
@@ -3039,6 +3049,116 @@ const BASE_WORKOUTS = [
   { key: "chest-tri", name: "Chest & triceps", starter: ["barbell-bench-press", "incline-dumbbell-press", "cable-fly", "parallel-bar-dip", "skull-crusher", "rope-pushdown"] },
   { key: "shoulders-traps", name: "Shoulders & traps", starter: ["standing-barbell-overhead-press", "dumbbell-lateral-raise", "cable-lateral-raise", "face-pull", "reverse-pec-deck", "dumbbell-shrug"] },
 ];
+
+/* ---------- Running: one run per session, logged as distance and time, with an optional goal for each ---------- */
+// A run is stored like a single set with its own meaning: w = miles, a = time in seconds, t = goal miles,
+// tt = goal time in seconds, rn = 1. Saved sessions also carry run: 1. Weight-only features skip these rows.
+DATA.push({ id: "running", name: "Running", group: "Cardio & conditioning", base: "Running", equipment: "bodyweight", detail: "", unilateral: false,
+  primary_muscles: ["quads"], secondary_muscles: ["calves", "glutes", "hamstrings"], track: "run", level: "beginner", mechanic: "compound", force: "push",
+  aka: ["Run", "Jog", "Jogging", "Outdoor run"],
+  instructions: ["Warm up with 5 minutes of walking or easy jogging.", "Run tall with relaxed shoulders, a slight forward lean from the ankles and your feet landing under your hips.",
+    "Keep an easy, conversational effort for most runs; save hard efforts for one or two runs a week.", "Finish with a few minutes of walking to cool down.",
+    "Log your distance in miles and your total time. Set a goal for distance, time, or both."] });
+function isRun(id) { const d = BY_ID[id]; return !!(d && d.track === "run"); }
+// "28:30" -> 1710 s, "1:05:00" -> 3900 s, "30" -> 30 minutes
+function parseDur(v) {
+  const t = String(v == null ? "" : v).trim(); if (!t) return "";
+  if (/^\d+(\.\d+)?$/.test(t)) { const m = Number(t); return m > 0 && m <= 1440 ? Math.round(m * 60) : null; }
+  const p = t.split(":"); if (p.length < 2 || p.length > 3 || p.some(x => !/^\d{1,3}$/.test(x))) return null;
+  const n = p.map(Number), sec = p.length === 3 ? n[0] * 3600 + n[1] * 60 + n[2] : n[0] * 60 + n[1];
+  if ((p.length === 3 ? n[2] : n[1]) >= 60 || (p.length === 3 && n[1] >= 60)) return null;
+  return sec > 0 && sec <= 86400 ? sec : null;
+}
+function fmtDur(sec) {
+  if (sec === "" || sec == null || !isFinite(Number(sec))) return "";
+  const s = Math.round(Number(sec)), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
+}
+function parseMiles(v) { const t = String(v == null ? "" : v).trim(); if (!t) return ""; const n = Number(t); return isFinite(n) && n > 0 && n <= 200 ? String(Math.round(n * 100) / 100) : null; }
+const runMi = r => { const n = Number(r && r.w); return r && r.w !== "" && isFinite(n) && n > 0 ? n : null; };
+const runSec = r => { const n = Number(r && r.a); return r && r.a !== "" && isFinite(n) && n > 0 ? n : null; };
+function fmtPace(secPerMi) { return secPerMi ? fmtDur(secPerMi) + " /mi" : "–"; }
+function runPace(r) { const mi = runMi(r), s = runSec(r); return mi && s ? s / mi : null; }
+// Did the run meet its goal? Distance goal: go at least that far. Time goal alone: run at least that long.
+// Both: cover the distance within the time.
+function runGoal(r) {
+  const mi = runMi(r), s = runSec(r), gm = Number(r.t) > 0 ? Number(r.t) : null, gs = Number(r.tt) > 0 ? Number(r.tt) : null;
+  if (!gm && !gs) return { set: false };
+  if (mi == null && s == null) return { set: true, done: false };
+  let hit, text;
+  if (gm && gs) {
+    if (mi == null || s == null) return { set: true, done: false };
+    const farEnough = mi >= gm - 1e-9, fastEnough = s <= gs;
+    hit = farEnough && fastEnough;
+    text = hit ? "Goal hit" : !farEnough ? `${fmtNum(Math.round((gm - mi) * 100) / 100)} mi short` : `${fmtDur(s - gs)} over`;
+  } else if (gm) { if (mi == null) return { set: true, done: false }; hit = mi >= gm - 1e-9; text = hit ? "Goal hit" : `${fmtNum(Math.round((gm - mi) * 100) / 100)} mi short`; }
+  else { if (s == null) return { set: true, done: false }; hit = s >= gs; text = hit ? "Goal hit" : `${fmtDur(gs - s)} short`; }
+  return { set: true, done: true, hit, text };
+}
+function runGoalText(gm, gs) {
+  const m = Number(gm) > 0 ? `${fmtNum(Number(gm))} mi` : "", t = Number(gs) > 0 ? fmtDur(gs) : "";
+  return m && t ? `${m} in ${t}` : m ? m : t ? `${t} of running` : "";
+}
+function runText(r) { const mi = runMi(r), s = runSec(r); return [mi != null ? `${fmtNum(mi)} mi` : "", s != null ? fmtDur(s) : ""].filter(Boolean).join(" · "); }
+function runSessionStats(s) {
+  const r = (s.sets || []).find(x => x && x.rn) || (s.sets || [])[0] || {};
+  const mi = runMi(r), sec = runSec(r), g = runGoal(r);
+  let n = mi != null || sec != null ? 1 : 0;
+  if (s.note && s.note.trim()) n = Math.max(n, 0.5);
+  return { d: s.d, k: s.k, sid: s.sid || null, note: s.note || "", sets: s.sets || [], ...(s.tm ? { tm: s.tm } : {}), top: null, topReps: null, e1rm: null, vol: 0, reps: 0, n, repSets: 0,
+    hit: g.done && g.hit ? 1 : 0, tgt: g.done ? 1 : 0, mostReps: null, run: { mi, sec, pace: mi && sec ? sec / mi : null } };
+}
+// Planner: the goal inputs that replace sets × reps
+function runGoalInputs(it, d) {
+  return `<div class="sr rgoals"><span>Goal</span><input class="num rgoal" type="text" inputmode="decimal" id="gmi-${ui.plan}-${d.id}" data-g="mi" value="${esc(it.gmi || "")}" placeholder="mi" aria-label="Goal distance in miles"><span>mi in</span><input class="num rgoal rgt" type="text" inputmode="numeric" id="gt-${ui.plan}-${d.id}" data-g="time" value="${esc(it.gsec ? fmtDur(it.gsec) : "")}" placeholder="mm:ss" aria-label="Goal time, minutes and seconds"></div>`;
+}
+// Workout: one row for today's run
+function runLogPanel(it, i) {
+  const k = ui.plan + ":" + it.id, open = openLogs.has(k), row = getLog(it)[0], ls = lastSession(it.id);
+  const lr = ls ? (ls.sets || []).find(x => x && x.rn) || (ls.sets || [])[0] : null, g = runGoal(row), pace = runPace(row);
+  const goal = runGoalText(it.gmi, it.gsec);
+  let h = `<div class="logwrap"><button class="logtoggle" type="button" data-a="log" aria-expanded="${open}" aria-controls="log-${i}">
+    <span>Run log &amp; notes</span><span>·</span><span class="lsum">${logSummary(it)}</span><span class="chev" aria-hidden="true">▾</span></button>
+    <div class="runlog" id="log-${i}" ${open ? "" : "hidden"}>
+      <div class="rl-grid">
+        <div class="rl-f"><label for="rmi-${i}">Distance (mi)</label><input class="lsel rin" id="rmi-${i}" type="text" inputmode="decimal" autocomplete="off" data-f="mi" value="${esc(row.w)}" placeholder="${lr && runMi(lr) ? esc(String(runMi(lr))) : "e.g. 3.1"}"></div>
+        <div class="rl-f"><label for="rtm-${i}">Time</label><input class="lsel rin" id="rtm-${i}" type="text" inputmode="numeric" autocomplete="off" data-f="time" value="${esc(row.a !== "" ? fmtDur(row.a) : "")}" placeholder="${lr && runSec(lr) ? esc(fmtDur(runSec(lr))) : "mm:ss"}"></div>
+        <div class="rl-f"><span class="rl-k">Pace</span><b class="rl-pace">${pace ? fmtPace(pace) : "–"}</b></div>
+        <div class="rl-f"><span class="rl-k">Goal${goal ? " · " + esc(goal) : ""}</span><b class="rl-goal lstat ${g.done ? (g.hit ? "hit" : "miss") : ""}">${g.done ? esc(g.text) : goal ? "–" : "No goal set"}</b></div>
+      </div>
+      <p class="plan-note rl-tip">Type time as minutes and seconds (28:30), hours too (1:05:00), or just minutes (30).${lr ? ` Last run (${esc(fmtDate(ls.d))}): <b>${esc(runText(lr))}</b>${runPace(lr) ? ` at ${esc(fmtPace(runPace(lr)))}` : ""}.` : ""}</p>`;
+  return h + `</div><div ${open ? "" : "hidden"} id="notes-${i}">${notesBlock(it, i)}</div></div>`;
+}
+function runInput(el) {
+  const li = el.closest(".pitem"), it = plans[ui.plan][Number(li.dataset.i)], row = getLog(it)[0];
+  if (el.dataset.f === "mi") {
+    const v = parseMiles(el.value); if (v === null) { el.value = row.w; showToast("Enter the distance in miles, like 3.1."); return; }
+    row.w = v; el.value = v;
+  } else {
+    const v = parseDur(el.value); if (v === null) { el.value = row.a !== "" ? fmtDur(row.a) : ""; showToast("Enter time like 28:30, 1:05:00, or minutes like 30."); return; }
+    row.a = v === "" ? "" : String(v); el.value = v === "" ? "" : fmtDur(v);
+  }
+  const now = Date.now(); startRun(ui.plan, now);
+  if (row.w === "" && row.a === "") delete row.ts; else if (!row.ts) row.ts = now;
+  const g = runGoal(row), pace = runPace(row), ge = li.querySelector(".rl-goal"), pe = li.querySelector(".rl-pace");
+  if (pe) pe.textContent = pace ? fmtPace(pace) : "–";
+  if (ge) { ge.className = "rl-goal lstat " + (g.done ? (g.hit ? "hit" : "miss") : ""); ge.textContent = g.done ? g.text : runGoalText(it.gmi, it.gsec) ? "–" : "No goal set"; }
+  li.querySelector(".lsum").innerHTML = logSummary(it);
+  refreshTimerBar(); persist(ui.plan);
+  if (g.done && g.hit && !row.cheered) { row.cheered = 1; showToast(`Goal hit on your run: ${runText(row)}!`); try { navigator.vibrate && navigator.vibrate([60, 40, 60]); } catch (e) {} }
+}
+function runGoalInput(el) {
+  const li = el.closest(".pitem"), it = plans[ui.plan][Number(li.dataset.i)];
+  if (el.dataset.g === "mi") {
+    const v = parseMiles(el.value); if (v === null) { el.value = it.gmi || ""; showToast("Enter the goal distance in miles, like 3.1."); return; }
+    if (v === "") delete it.gmi; else it.gmi = v;
+  } else {
+    const v = parseDur(el.value); if (v === null) { el.value = it.gsec ? fmtDur(it.gsec) : ""; showToast("Enter the goal time like 28:30, or minutes like 30."); return; }
+    if (v === "") delete it.gsec; else it.gsec = v;
+  }
+  getLog(it); persist(ui.plan); renderPlans();
+}
+
 const BY_ID = Object.fromEntries(DATA.map(d => [d.id, d]));
 // custom = workouts copied from Foundations: [{ key, name, src, starter, gone? }]. Deleted ones keep their name for History.
 let custom = [];
@@ -3098,6 +3218,12 @@ function hasSetData(x) { return !!x && ((x.w != null && x.w !== "") || (x.a != n
 // One log row per planned set. Rows already filled in are never dropped here.
 function getLog(it) {
   if (!Array.isArray(it.log)) it.log = [];
+  if (isRun(it.id)) {
+    const row = it.log[0] && typeof it.log[0] === "object" ? it.log[0] : (it.log[0] = {});
+    row.w = row.w != null ? String(row.w) : ""; row.a = row.a != null && row.a !== "" ? String(row.a) : ""; row.rn = 1;
+    row.t = it.gmi || ""; row.tt = it.gsec || ""; if (!row.ts) delete row.ts; delete row.wu;
+    it.log.length = 1; it.sets = 1; return it.log;
+  }
   let n = Math.max(1, Math.min(MAX_SETS, Number(it.sets) || 3));
   for (let r = Math.min(it.log.length, MAX_SETS) - 1; r >= n; r--) if (hasSetData(it.log[r])) { n = r + 1; break; }
   if (Number(it.sets) !== n) it.sets = n;
@@ -3119,6 +3245,7 @@ function logStatus(row) {
   return { cls: "miss", text: String(diff) };
 }
 function logSummary(it) {
+  if (isRun(it.id)) { const r = getLog(it)[0], t = runText(r); return t ? `<span class="done">${esc(t)}</span>` : "Not logged yet"; }
   const log = getLog(it), done = log.filter(r => r.a !== "").length;
   const t = done && ui.view === "plans" && plans[ui.plan] && plans[ui.plan].includes(it) ? liveTiming(ui.plan, it) : null;
   return done ? `<span class="done">${done}/${log.length} logged</span>${t && t.tot != null ? ` · ${fmtClock(t.tot)}` : ""}` : `${log.length} set${log.length === 1 ? "" : "s"}`;
@@ -3157,6 +3284,7 @@ function fmtDate(iso) {
 }
 function setText(s) {
   if (!s || (s.w === "" && s.a === "")) return "";
+  if (s.rn) return esc(runText(s));
   const w = s.w === "" ? "?" : s.w;
   return (s.wu ? `<span class="wu-t">W</span>` : "") + (s.a === "" ? `${w} lb` : `${w}<span class="x">×</span>${s.a}`);
 }
@@ -3247,6 +3375,7 @@ function timeLine(t, live) {
 }
 
 function logPanel(it, i) {
+  if (isRun(it.id)) return runLogPanel(it, i);
   const k = ui.plan + ":" + it.id, open = openLogs.has(k);
   const name = BY_ID[it.id].name;
   const ls = lastSession(it.id);
@@ -3282,6 +3411,9 @@ const STAT_METRICS = {
   e1rm: { label: "Est. 1-rep max", unit: " lb" },
   vol:  { label: "Volume", unit: " lb" },
   reps: { label: "Total reps", unit: " reps" },
+  rdist: { label: "Distance", unit: " mi" },
+  rmin: { label: "Time", unit: " min" },
+  rpace: { label: "Pace", unit: " min/mi" },
 };
 const statsUI = { id: null, metric: null, pts: [], lastFocus: null };
 const HIST_ICON = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 10 L4 6 L7 8 L11 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -3308,6 +3440,7 @@ function statBtn(id, inPlan) {
 
 // Per-session numbers. Bodyweight sets count toward reps but not toward weight figures.
 function sessionStats(s) {
+  if (s && (s.run || (s.sets || []).some(r => r && r.rn))) return runSessionStats(s);
   let top = null, topReps = null, e1 = null, vol = 0, reps = 0, n = 0, repSets = 0, hit = 0, tgt = 0, mostReps = null;
   (s.sets || []).forEach(r => {
     if (r.wu) return; // warm-ups don't count toward stats
@@ -3333,7 +3466,7 @@ function sessionStats(s) {
 // The very first session of an exercise sets the baseline, so it isn't counted.
 function e1rmOf(w, a) { return a === 1 ? w : w * (1 + a / 30); }
 function prSort(list) { return list.slice().sort((x, y) => (x.d < y.d ? -1 : x.d > y.d ? 1 : (x.sid || 0) - (y.sid || 0))); }
-function workingSet(r) { const w = numW(r && r.w), a = Number(r && r.a); return r && !r.wu && w != null && w > 0 && r.a !== "" && a > 0 ? { w, a, e: e1rmOf(w, a) } : null; }
+function workingSet(r) { if (r && r.rn) return null; const w = numW(r && r.w), a = Number(r && r.a); return r && !r.wu && w != null && w > 0 && r.a !== "" && a > 0 ? { w, a, e: e1rmOf(w, a) } : null; }
 // Map of history entry -> { set index: label } for one exercise
 function prMarks(id) {
   const out = new Map(); let bw = null, be = null, first = true;
@@ -3435,6 +3568,7 @@ function closeStats() {
 
 function renderStats() {
   const d = BY_ID[statsUI.id], body = document.getElementById("st-body");
+  if (isRun(d.id)) { renderRunStats(d, body); return; }
   const all = (Array.isArray(history[d.id]) ? history[d.id] : [])
     .map(sessionStats).filter(s => s.n > 0)
     .sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0)); // oldest first
@@ -4486,6 +4620,7 @@ function coachLive(it, P) {
 }
 
 function coachHTML(it, i) {
+  if (isRun(it.id)) return "";
   const P = progFor(ui.plan); if (P.id === "off") return "";
   const plan = coachPlan(it, P), live = coachLive(it, P);
   const wTxt = plan.bw ? "Bodyweight" : plan.w == null ? "Your pick" : `${fmtNum(plan.w)} lb`;
@@ -4501,6 +4636,7 @@ function refreshCoach(i) {
   if (el && it) el.outerHTML = coachHTML(it, i);
 }
 function coachApply(it, mode) {
+  if (isRun(it.id)) return;
   const P = progFor(ui.plan); if (P.id === "off") return;
   const log = getLog(it);
   if (mode === "cfill") {
@@ -4734,6 +4870,7 @@ function allDays() {
 }
 function setChip(r, best, pr) {
   if (!r || (r.w === "" && r.a === "")) return "";
+  if (r.rn) { const g = runGoal(r); return `<span class="dchip${g.done ? (g.hit ? " hit" : " miss") : ""}" title="${g.set ? "Goal: " + esc(runGoalText(r.t, r.tt)) : "No goal set"}">${esc(runText(r))}${g.done ? `<i>${g.hit ? "✓" : "✕"}</i>` : ""}</span>`; }
   if (r.wu) return `<span class="dchip wu" title="Warm-up set, not counted in stats"><span class="wu-t">W</span>${esc(r.w === "" ? "?" : r.w === "BW" ? "BW" : fmtNum(Number(r.w)))}${r.a !== "" ? `<span class="x">×</span>${r.a}` : " lb"}</span>`;
   const w = r.w === "" ? "?" : r.w === "BW" ? "BW" : fmtNum(Number(r.w));
   const a = r.a === "" ? null : Number(r.a), t = r.t === "" || r.t == null ? null : Number(r.t);
@@ -4799,8 +4936,8 @@ function renderDays() {
         const bestIdx = st.sets.findIndex(r => st.top != null && numW(r.w) === st.top && (st.topReps == null || Number(r.a) === st.topReps));
         h += `<div class="dd-row" role="row"><span role="cell"><button class="dd-ex" type="button" data-dex="${ex.id}">${esc(ex.name)}</button></span>
           <span role="cell" class="dd-sets">${(() => { const src = (history[ex.id] || []).find(e => e.d === day.d && (e.sid || null) === (st.sid || null) && e.sets === st.sets), mk = src ? (prMarksCached(ex.id).get(src) || {}) : {}; return st.sets.map((r, i) => setChip(r, i === bestIdx, mk[i])).join(""); })()}</span>
-          <span role="cell" class="dd-n" data-l="Top set">${st.top != null ? `${fmtNum(st.top)}${st.topReps != null ? "×" + st.topReps : " lb"}` : "BW"}</span>
-          <span role="cell" class="dd-n" data-l="Volume">${st.vol ? fmtNum(st.vol) + " lb" : "–"}</span>
+          <span role="cell" class="dd-n" data-l="${st.run ? "Pace" : "Top set"}">${st.run ? esc(fmtPace(st.run.pace)) : st.top != null ? `${fmtNum(st.top)}${st.topReps != null ? "×" + st.topReps : " lb"}` : "BW"}</span>
+          <span role="cell" class="dd-n" data-l="${st.run ? "Distance" : "Volume"}">${st.run ? (st.run.mi != null ? fmtNum(st.run.mi) + " mi" : "–") : st.vol ? fmtNum(st.vol) + " lb" : "–"}</span>
           <span role="cell" class="dd-n" data-l="Targets">${st.tgt ? `${st.hit}/${st.tgt}` : "–"}</span>
           <span role="cell" class="dd-n dd-time" data-l="Time · rest">${(() => { const tm = pastTiming(st, ex.id, stimes); return tm && tm.tot != null ? `${fmtClock(tm.tot)}${tm.avg != null ? `<small>rest ${fmtClock(tm.avg)}</small>` : ""}` : "–"; })()}</span>
           ${st.note && st.note.trim() ? `<span class="dd-note">${esc(st.note.trim())}</span>` : ""}</div>`;
@@ -4882,7 +5019,110 @@ function progBuckets(id, per) {
     .sort((a, b) => a.x - b.x);
 }
 const r1 = v => Math.round(v * 10) / 10;
-function progFmt(v, mk) { if (v == null) return "–"; return mk === "vol" && v >= 10000 ? fmtNum(r1(v / 1000)) + "k" : fmtNum(mk === "e1rm" || mk === "vol" ? Math.round(v) : r1(v)); }
+
+/* ---------- Runs in Progress and the history sheet ---------- */
+const RUN_PM = {
+  dist: { label: "Distance", unit: " mi", what: "total distance" },
+  long: { label: "Longest run", unit: " mi", what: "longest run" },
+  rtime: { label: "Time", unit: "", what: "total running time", dur: true },
+  pace: { label: "Avg pace", unit: " /mi", what: "average pace", dur: true, lower: true },
+};
+function progRunBuckets(id, per) {
+  const map = {};
+  (Array.isArray(history[id]) ? history[id] : []).forEach(s => {
+    if (!s || !s.d) return;
+    const st = runSessionStats(s); if (!(st.n >= 1) || !st.run) return;
+    const k = progKey(s.d, per), b = map[k] = map[k] || { k, x: dayNum(k), n: 0, sets: 0, mi: 0, sec: 0, paceMi: 0, paceSec: 0, long: null, hit: 0, tgt: 0, run: true };
+    b.n++; b.sets++; b.hit += st.hit; b.tgt += st.tgt;
+    if (st.run.mi != null) { b.mi += st.run.mi; if (b.long == null || st.run.mi > b.long) b.long = st.run.mi; }
+    if (st.run.sec != null) b.sec += st.run.sec;
+    if (st.run.mi != null && st.run.sec != null) { b.paceMi += st.run.mi; b.paceSec += st.run.sec; }
+  });
+  return Object.values(map).map(b => ({ ...b, dist: b.mi > 0 ? b.mi : null, rtime: b.sec > 0 ? b.sec / 60 : null, pace: b.paceMi > 0 ? b.paceSec / b.paceMi / 60 : null })).sort((a, b) => a.x - b.x);
+}
+function runMetricFmt(v, mk) { if (v == null) return "–"; return RUN_PM[mk] && RUN_PM[mk].dur ? fmtDur(v * 60) : fmtNum(Math.round(v * 100) / 100); }
+function progRunHTML(ex, list) {
+  const dayB = progRunBuckets(ex.id, "day"), B = progRunBuckets(ex.id, progUI.per), perName = progUI.per;
+  if (!RUN_PM[progUI.metric]) progUI.metric = "dist";
+  const mk = progUI.metric, M = RUN_PM[mk];
+  let h = `<div class="pg-ctrl">
+    <div class="set-field"><label for="pg-ex">Exercise</label><select class="set-in" id="pg-ex">${list.map(x => `<option value="${esc(x.ex.id)}"${x.ex.id === ex.id ? " selected" : ""}>${esc(x.ex.name)} · ${x.n} session${x.n === 1 ? "" : "s"}</option>`).join("")}</select></div>
+    <div class="set-field"><span class="pg-lab">View by</span><div class="seg" role="group" aria-label="Group sessions by">${PROG_PER.map(([k, l]) => `<button type="button" data-pper="${k}" aria-pressed="${k === perName}">${l}</button>`).join("")}</div></div>
+  </div>`;
+  const sum = f => dayB.reduce((n, b) => n + f(b), 0), runsN = sum(b => b.n), mi = sum(b => b.mi), sec = sum(b => b.sec), pMi = sum(b => b.paceMi), pSec = sum(b => b.paceSec);
+  const longest = dayB.filter(b => b.long != null).reduce((m, b) => (!m || b.long > m.long ? b : m), null);
+  const fastest = dayB.filter(b => b.pace != null).reduce((m, b) => (!m || b.pace < m.pace ? b : m), null);
+  const hit = sum(b => b.hit), tgt = sum(b => b.tgt);
+  const tile = (k, v, s) => `<div class="st-tile"><span class="k">${k}</span><span class="v">${v}</span><span class="s">${s}</span></div>`;
+  let tiles = tile("Runs", runsN, `since ${esc(shortDate(dayB[0].k))}`);
+  tiles += tile("Total distance", `${fmtNum(Math.round(mi * 10) / 10)}<small>mi</small>`, sec ? `${esc(fmtDur(sec))} running` : "all time");
+  tiles += tile("Longest run", longest ? `${fmtNum(longest.long)}<small>mi</small>` : "–", longest ? esc(shortDate(longest.k)) : "");
+  tiles += tile("Fastest pace", fastest ? `${esc(fmtDur(fastest.pace * 60))}<small>/mi</small>` : "–", fastest ? esc(shortDate(fastest.k)) : "Log distance and time");
+  tiles += tile("Average pace", pMi ? `${esc(fmtDur(pSec / pMi))}<small>/mi</small>` : "–", "across all runs");
+  tiles += tile("Goals hit", tgt ? `${hit}<small>/ ${tgt}</small>` : "–", tgt ? "runs with a goal" : "Set a goal in My workouts");
+  const pts = B.filter(b => b[mk] != null).map(b => ({ x: b.x, y: b[mk], b }));
+  progUI.pts = pts;
+  const reg = pts.length >= 3 ? regress(pts) : null;
+  h += `<section class="st-sec"><span class="label">All time · ${esc(ex.name)}</span><div class="st-tiles pg-tiles" style="--cols:3">${tiles}</div></section>`;
+  let read;
+  if (reg) {
+    const n = pts.length, xEnd = pts[n - 1].x + progUI.ahead, proj = Math.max(0, reg.at(xEnd));
+    const endD = new Date(parseISO(pts[n - 1].b.k).getTime() + progUI.ahead * 864e5);
+    read = `At this rate: <b>${runMetricFmt(proj, mk)}${M.unit}</b> ${esc(M.what)} ${perName === "day" ? "per run" : "per " + perName} by ${esc(endD.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }))}${M.lower ? " (lower is faster)" : ""}`;
+  } else read = `Log ${3 - pts.length} more ${perName}${3 - pts.length === 1 ? "" : "s"} of running to see a trend and projection.`;
+  h += `<section class="st-sec">
+    <div class="st-chart-head"><span class="label">${esc(M.label)} · each ${perName}</span>
+      <div class="seg" role="group" aria-label="Chart measure">${Object.keys(RUN_PM).map(k => `<button type="button" data-pm="${k}" aria-pressed="${k === mk}">${RUN_PM[k].label}</button>`).join("")}</div></div>
+    <div class="st-chart" id="pg-chart" role="img" aria-label="${esc(M.label)} for ${esc(ex.name)} each ${perName}, with trend. Every ${perName} is listed below."></div>
+    <div class="st-chart-head"><div class="st-legend"><span><i class="sw"></i>${esc(M.label)}${M.dur ? " (minutes)" : ""}</span>${reg ? '<span><i class="sw trend"></i>Trend</span><span><i class="sw pg-swf"></i>Projection</span>' : ""}</div>
+      ${reg ? `<div class="seg" role="group" aria-label="Project ahead"><span class="pg-lab" style="align-self:center;margin-right:4px">Ahead</span>${PROG_AHEAD.map(([d, l]) => `<button type="button" data-pah="${d}" aria-pressed="${d === progUI.ahead}">${l}</button>`).join("")}</div>` : ""}</div>
+    <div class="st-trendline">${read}</div></section>`;
+  h += `<section class="st-sec"><div class="st-chart-head"><span class="label">Every ${perName} (${B.length})</span><button class="linkbtn" type="button" data-plog>Every run</button></div>
+    <div class="st-logwrap"><table class="st-log"><thead><tr><th>${perName === "day" ? "Date" : perName === "week" ? "Week of" : "Month"}</th><th class="num">Runs</th><th class="num">Distance</th><th class="num">Time</th><th class="num">Avg pace</th><th class="num">Longest</th><th class="num">Goals hit</th></tr></thead><tbody>
+    ${B.slice().reverse().map(b => `<tr><td class="date">${esc(progLabel(b.k, perName, false))}</td><td class="num">${b.n}</td><td class="num">${b.dist != null ? fmtNum(Math.round(b.dist * 100) / 100) + " mi" : "–"}</td><td class="num">${b.sec ? esc(fmtDur(b.sec)) : "–"}</td><td class="num">${b.pace != null ? esc(fmtDur(b.pace * 60)) + " /mi" : "–"}</td><td class="num">${b.long != null ? fmtNum(b.long) + " mi" : "–"}</td><td class="num">${b.tgt ? `${b.hit}/${b.tgt}` : "–"}</td></tr>`).join("")}
+    </tbody></table></div></section>`;
+  return h;
+}
+// History sheet for a run exercise
+function renderRunStats(d, body) {
+  const all = (Array.isArray(history[d.id]) ? history[d.id] : []).map(runSessionStats).filter(s => s.n >= 1).sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+  let h = `<div class="st-head"><div><div class="eyebrow">All-time history · ${esc(d.group)}</div><h2 id="st-title">${esc(d.name)}</h2>
+    <div class="sub">Distance and time, one run per session</div></div><button class="sheet-x" type="button" data-close aria-label="Close history">✕</button></div>`;
+  if (!all.length) { body.innerHTML = h + `<div class="st-empty"><p>No runs saved yet. Add Running to a workout, log your distance and time, and tap <b>Finish workout</b>.</p></div>`; statsUI.pts = []; return; }
+  const withMi = all.filter(s => s.run.mi != null), withPace = all.filter(s => s.run.pace != null);
+  const mi = withMi.reduce((n, s) => n + s.run.mi, 0), sec = all.reduce((n, s) => n + (s.run.sec || 0), 0);
+  const longest = withMi.reduce((m, s) => (!m || s.run.mi > m.run.mi ? s : m), null), fastest = withPace.reduce((m, s) => (!m || s.run.pace < m.run.pace ? s : m), null);
+  const tgt = all.reduce((n, s) => n + s.tgt, 0), hit = all.reduce((n, s) => n + s.hit, 0);
+  const tile = (k, v, s) => `<div class="st-tile"><span class="k">${k}</span><span class="v">${v}</span><span class="s">${s}</span></div>`;
+  h += `<section class="st-sec"><span class="label">Summary</span><div class="st-tiles" style="--cols:3">
+    ${tile("Runs", all.length, `since ${esc(shortDate(all[0].d))}`)}
+    ${tile("Total distance", `${fmtNum(Math.round(mi * 10) / 10)}<small>mi</small>`, sec ? `${esc(fmtDur(sec))} running` : "all time")}
+    ${tile("Longest run", longest ? `${fmtNum(longest.run.mi)}<small>mi</small>` : "–", longest ? esc(shortDate(longest.d)) : "")}
+    ${tile("Fastest pace", fastest ? `${esc(fmtDur(fastest.run.pace))}<small>/mi</small>` : "–", fastest ? esc(shortDate(fastest.d)) : "Log distance and time")}
+    ${tile("Average pace", withPace.length ? `${esc(fmtDur(withPace.reduce((n, s) => n + s.run.sec, 0) / withPace.reduce((n, s) => n + s.run.mi, 0)))}<small>/mi</small>` : "–", "across all runs")}
+    ${tile("Goals hit", tgt ? `${hit}<small>/ ${tgt}</small>` : "–", tgt ? "runs with a goal" : "No goals set yet")}</div></section>`;
+  const keys = ["rdist", "rmin", "rpace"];
+  if (!keys.includes(statsUI.metric)) statsUI.metric = "rdist";
+  const mk = statsUI.metric, M = STAT_METRICS[mk];
+  const val = s => mk === "rdist" ? s.run.mi : mk === "rmin" ? (s.run.sec != null ? Math.round(s.run.sec / 6) / 10 : null) : (s.run.pace != null ? Math.round(s.run.pace / 6) / 10 : null);
+  statsUI.pts = all.filter(s => val(s) != null).map(s => ({ x: dayNum(s.d), y: val(s), s }));
+  h += `<section class="st-sec"><div class="st-chart-head"><span class="label">Trend</span>
+      <div class="seg" role="group" aria-label="Chart measure">${keys.map(k => `<button type="button" data-metric="${k}" aria-pressed="${k === mk}">${STAT_METRICS[k].label}</button>`).join("")}</div></div>
+    <div class="st-chart" id="st-chart" role="img" aria-label="${esc(M.label)} for each run. Every run is listed below."></div>
+    <div class="st-legend"><span><i class="sw"></i>${esc(M.label)}</span><span><i class="sw avg"></i>Average</span>${statsUI.pts.length >= 3 ? `<span><i class="sw trend"></i>Trend</span>` : ""}</div></section>`;
+  const notesAll = noteHistory(d.id);
+  if (notesAll.length) h += `<section class="st-sec"><span class="label">Notes (${notesAll.length})</span>${noteList(notesAll)}</section>`;
+  h += `<section class="st-sec"><span class="label">Every run (${all.length})</span><div class="st-logwrap"><table class="st-log">
+    <thead><tr><th>Date</th><th>Run and notes</th><th class="num">Pace</th><th class="num">Goal</th></tr></thead><tbody>
+    ${all.slice().reverse().map(s => { const r = s.sets.find(x => x && x.rn) || s.sets[0] || {}, g = runGoal(r); return `<tr><td><div class="date">${esc(fullDate(s.d))}</div><div class="wk">${esc(WK[s.k] ? WK[s.k].name : "Workout")}</div></td>
+      <td><div class="st-sets"><span>${esc(runText(r))}</span></div>${s.note && s.note.trim() ? `<div class="st-note">${esc(s.note.trim())}</div>` : ""}</td>
+      <td class="num">${esc(fmtPace(s.run.pace))}</td><td class="num">${g.set ? `<span class="st-hit ${g.done ? (g.hit ? "full" : "part") : ""}">${esc(runGoalText(r.t, r.tt))}${g.done ? (g.hit ? " ✓" : " ✕") : ""}</span>` : "–"}</td></tr>`; }).join("")}
+    </tbody></table></div></section>`;
+  body.innerHTML = h;
+  drawChart();
+}
+
+function progFmt(v, mk) { if (v == null) return "–"; if (RUN_PM[mk]) return runMetricFmt(v, mk); return mk === "vol" && v >= 10000 ? fmtNum(r1(v / 1000)) + "k" : fmtNum(mk === "e1rm" || mk === "vol" ? Math.round(v) : r1(v)); }
 
 function renderProg() {
   const root = document.getElementById("view-prog");
@@ -4894,6 +5134,7 @@ function renderProg() {
   }
   if (!progUI.id || !list.some(x => x.ex.id === progUI.id)) progUI.id = list[0].ex.id;
   const ex = BY_ID[progUI.id];
+  if (isRun(ex.id)) { root.innerHTML = h + progRunHTML(ex, list); drawProgChart(); return; }
   const dayB = progBuckets(ex.id, "day"), B = progBuckets(ex.id, progUI.per);
   const weighted = dayB.some(b => b.wN > 0);
   const avail = Object.keys(PROG_METRICS).filter(k => weighted || !PROG_METRICS[k].w);
@@ -4967,7 +5208,7 @@ function renderProg() {
 
 function drawProgChart() {
   const box = document.getElementById("pg-chart"); if (!box) return;
-  const pts = progUI.pts, mk = progUI.metric, M = PROG_METRICS[mk];
+  const pts = progUI.pts, mk = progUI.metric, M = (RUN_PM[mk] ? RUN_PM : PROG_METRICS)[mk];
   if (!pts.length) { box.innerHTML = `<div class="pg-none">No ${esc(M.what)} logged yet.</div>`; return; }
   const reg = pts.length >= 3 ? regress(pts) : null;
   const W = Math.max(280, Math.round(box.clientWidth - 8)), H = W < 480 ? 210 : 250, m = { l: 48, r: 20, t: 22, b: 28 };
@@ -5004,7 +5245,7 @@ function drawProgChart() {
     const p = pts[bi], b = p.b;
     if (on) on.classList.remove("on"); on = svg.querySelector(`.c-pt[data-i="${bi}"]`); on.classList.add("on");
     const avgSet = b.avgw != null ? `${fmtNum(r1(b.avgw))} lb${b.avgr != null ? " × " + fmtNum(r1(b.avgr)) : ""}` : b.avgr != null ? `${fmtNum(r1(b.avgr))} reps` : "";
-    tip.innerHTML = `${esc(progLabel(b.k, progUI.per, true))}<b>${progFmt(p.y, mk)}${M.unit}</b>${avgSet ? "Avg set " + esc(avgSet) + "<br>" : ""}${b.sets} set${b.sets === 1 ? "" : "s"} · ${b.n} session${b.n === 1 ? "" : "s"}`;
+    tip.innerHTML = `${esc(progLabel(b.k, progUI.per, true))}<b>${progFmt(p.y, mk)}${M.unit}</b>${b.run ? `${b.n} run${b.n === 1 ? "" : "s"}${b.dist != null ? " · " + fmtNum(Math.round(b.dist * 100) / 100) + " mi" : ""}${b.pace != null ? " · " + esc(fmtDur(b.pace * 60)) + " /mi" : ""}` : `${avgSet ? "Avg set " + esc(avgSet) + "<br>" : ""}${b.sets} set${b.sets === 1 ? "" : "s"} · ${b.n} session${b.n === 1 ? "" : "s"}`}`;
     tip.hidden = false;
     const bx = box.getBoundingClientRect(), left = sx(p.x) * (rect.width / W) + (rect.left - bx.left), tw = tip.offsetWidth;
     tip.style.left = Math.max(4, Math.min(bx.width - tw - 4, left > bx.width / 2 ? left - tw - 12 : left + 12)) + "px";
@@ -6750,7 +6991,7 @@ function writeDoc(key, data, onErr) {
   storage.chain = prev.then(() => storage.col.doc(key).set(data)).catch(onErr).finally(() => clearPending(key));
 }
 const saveErr = () => showToast("Couldn't save that change. Check your connection and try again.");
-function planPayload(key) { return { items: plans[key].map(it => ({ id: it.id, sets: it.sets, reps: it.reps, log: JSON.parse(JSON.stringify(getLog(it))), note: it.note || "", ...(exSegs(it) ? { tm: JSON.parse(JSON.stringify(it.tm)) } : {}) })), run: runs[key] || null }; }
+function planPayload(key) { return { items: plans[key].map(it => ({ id: it.id, sets: it.sets, reps: it.reps, ...(it.gmi ? { gmi: it.gmi } : {}), ...(it.gsec ? { gsec: it.gsec } : {}), log: JSON.parse(JSON.stringify(getLog(it))), note: it.note || "", ...(exSegs(it) ? { tm: JSON.parse(JSON.stringify(it.tm)) } : {}) })), run: runs[key] || null }; }
 
 function persistHistory() {
   if (storage.mode !== "db") { saveLocal(); return; }
@@ -6848,7 +7089,7 @@ function addToPlan(key, ids) {
   let added = 0;
   ids.forEach(id => {
     if (!BY_ID[id] || plans[key].some(it => it.id === id)) return;
-    plans[key].push({ id, sets: 3, reps: 10 }); added++;
+    plans[key].push(isRun(id) ? { id, sets: 1, reps: 1 } : { id, sets: 3, reps: 10 }); added++;
   });
   persist(key);
   return added;
@@ -7077,7 +7318,7 @@ function renderPicker() {
       <p class="plan-note">${items.length ? `${lastTxt} Starting begins the workout timer.` : "This workout has no exercises yet. Add some before you start."}</p>
       ${wkManageHTML()}</div>
     <section class="st-sec"><div class="pick-head"><span class="label">In this workout</span><span class="pick-acts">${groupBtn(ui.plan)}<button class="linkbtn" type="button" data-wk="edit">${items.length ? "Edit exercises" : "Add exercises"}</button></span></div>`;
-  if (items.length) h += `<ol class="pick-list">${items.map((it, i) => `<li><span class="ord">${i + 1}</span><div class="pk-main"><b>${esc(BY_ID[it.id].name)}</b>${lastLine(it.id)}</div><span class="pk-sr">${it.sets} × ${it.reps}</span></li>`).join("")}</ol>`;
+  if (items.length) h += `<ol class="pick-list">${items.map((it, i) => `<li><span class="ord">${i + 1}</span><div class="pk-main"><b>${esc(BY_ID[it.id].name)}</b>${lastLine(it.id)}</div><span class="pk-sr">${isRun(it.id) ? esc(runGoalText(it.gmi, it.gsec) || "Run") : `${it.sets} × ${it.reps}`}</span></li>`).join("")}</ol>`;
   else h += `<div class="empty">No exercises in this workout yet.</div>`;
   main.innerHTML = h + `</section>`;
   renderCounts();
@@ -7108,8 +7349,8 @@ function renderPlanWork() {
     html += `<li class="pitem" data-i="${i}">
       <span class="ord">${i + 1}</span>
       <div style="min-width:0"><div class="name">${esc(d.name)}</div><div class="sub">${esc(d.equipment)} · ${esc(d.primary_muscles.join(", "))}</div>${lastLine(d.id)}<div class="rowbtns">${editing ? "" : exClockHTML(it, i)}${statBtn(d.id, true)}${howBtn(d, true)}</div></div>
-      <div class="sr"><input class="num" type="number" inputmode="numeric" min="1" max="20" id="sets-${ui.plan}-${d.id}" data-f="sets" value="${it.sets}" aria-label="Sets">
-        <span>sets ×</span><input class="num" type="number" inputmode="numeric" min="1" max="100" id="reps-${ui.plan}-${d.id}" data-f="reps" value="${it.reps}" aria-label="Reps"><span>reps</span></div>
+      ${isRun(d.id) ? runGoalInputs(it, d) : `<div class="sr"><input class="num" type="number" inputmode="numeric" min="1" max="20" id="sets-${ui.plan}-${d.id}" data-f="sets" value="${it.sets}" aria-label="Sets">
+        <span>sets ×</span><input class="num" type="number" inputmode="numeric" min="1" max="100" id="reps-${ui.plan}-${d.id}" data-f="reps" value="${it.reps}" aria-label="Reps"><span>reps</span></div>`}
       <div class="ctrls"><button class="ibtn" type="button" data-a="up" aria-label="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
         <button class="ibtn" type="button" data-a="down" aria-label="Move down" ${i === items.length - 1 ? "disabled" : ""}>↓</button>
         <button class="ibtn del" type="button" data-a="del" aria-label="Remove ${esc(d.name)}">✕</button></div>
@@ -7189,14 +7430,14 @@ function finishWorkout() {
     const log = getLog(it);
     const note = (it.note || "").trim();
     if (!log.some(r => r.a !== "" || r.w !== "") && !note) return;
-    const sets = log.map(r => ({ w: r.w, t: r.t, a: r.a, ...(r.ts ? { ts: r.ts } : {}), ...(r.wu ? { wu: true } : {}) }));
+    const sets = log.map(r => ({ w: r.w, t: r.t, a: r.a, ...(r.ts ? { ts: r.ts } : {}), ...(r.wu ? { wu: true } : {}), ...(r.rn ? { rn: 1, ...(r.tt ? { tt: r.tt } : {}) } : {}) }));
     const list = Array.isArray(history[it.id]) ? history[it.id] : [];
     // Every finished session is its own entry; finishing clears the log, so a second tap has nothing to save
     if (exRunning(it)) it.tm.at(-1)[1] = Date.now();
     const tm = exSegs(it) ? JSON.parse(JSON.stringify(it.tm)) : null;
-    history[it.id] = [{ d: day, k: key, sid, sets, ...(note ? { note } : {}), ...(tm ? { tm } : {}) }, ...list].slice(0, HISTORY_KEEP);
+    history[it.id] = [{ d: day, k: key, sid, sets, ...(isRun(it.id) ? { run: 1 } : {}), ...(note ? { note } : {}), ...(tm ? { tm } : {}) }, ...list].slice(0, HISTORY_KEEP);
     delete it.tm;
-    log.forEach(r => { r.w = ""; r.a = ""; delete r.ts; });
+    log.forEach(r => { r.w = ""; r.a = ""; delete r.ts; delete r.cheered; });
     it.note = "";
     saved++;
   });
@@ -7283,6 +7524,8 @@ document.getElementById("plan-main").addEventListener("change", e => {
     persist(ui.plan);
     return;
   }
+  const rin = e.target.closest(".rin"); if (rin) { runInput(rin); return; }
+  const rg = e.target.closest(".rgoal"); if (rg) { runGoalInput(rg); return; }
   const lf = e.target.closest(".lsel, .lnum");
   if (lf) {
     const li = lf.closest(".pitem"), it = plans[ui.plan][Number(li.dataset.i)];
@@ -8146,8 +8389,10 @@ const HELP_TOPICS = [
     a: "Yes: open <b>Foundations</b> for eight ready-made workouts (full body, chest, back, shoulders, arms, legs, glutes and core). Each exercise explains what it works and how to do it. Tap <b>Copy to My Workouts</b> to make one yours." },
   { id: "equip", q: "Can it build a workout from my equipment?", go: "plans", k: ["equipment", "home gym", "what i have", "dumbbells only", "no gym", "bodyweight only", "my equipment", "available equipment"],
     a: "Yes. In <b>My workouts</b>, choose <b>From my equipment</b>, then describe what you have (or tap <b>I only have my bodyweight</b>). It builds workouts from that. Tap <b>Shuffle all</b> for new picks and <b>Save to My Workouts</b> to keep one." },
-  { id: "cardio", q: "How do I log cardio or follow a race plan?", go: "plans", k: ["cardio", "run", "running", "marathon", "half marathon", "hyrox", "ironman", "triathlon", "bike", "cycling", "swim", "row", "walk", "race"],
+  { id: "cardio", q: "How do I log cardio or follow a race plan?", go: "plans", k: ["cardio", "running plan", "race plan", "marathon", "half marathon", "hyrox", "ironman", "triathlon", "bike", "cycling", "swim", "row", "walk", "race"],
     a: "In <b>My workouts</b>, choose <b>Cardio &amp; race training</b>. Log runs, rides, swims, rows and more, or follow a full plan for HYROX, half and full marathons, half Ironman or Ironman." },
+  { id: "running", q: "How do I log a run?", go: "plans", k: ["log run", "running", "track run", "miles", "distance", "pace", "run goal", "mile goal", "time goal", "how far", "jog"],
+    a: "Add <b>Running</b> to a workout from the <b>Exercise library</b>. Instead of sets and reps, set a <b>goal</b> in miles, a time, or both (like 3 mi in 30:00). During the workout, open <b>Run log</b> and enter your distance and time; your pace and whether you hit the goal show straight away. Each run appears in <b>History</b> and <b>Progress</b> with distance, time and pace." },
   { id: "library", q: "How do I find an exercise?", go: "library", k: ["hamstring", "chest exercise", "back exercise", "leg exercise", "glute", "bicep", "tricep", "shoulder exercise", "quad", "abs", "core exercise", "exercise for", "find exercise", "search exercise", "exercise library", "look up exercise", "exercises for", "muscle", "filter", "variation", "how to do", "instructions", "form", "photos", "pictures"],
     a: "Open the <b>Exercise library</b>. Search by name or muscle (like \"incline\" or \"hamstrings\"), pick a movement group, or filter by equipment. Tap an exercise to see its variations, start-and-end photos, step-by-step instructions and your history with it." },
   { id: "history", q: "Where do I see my past workouts?", go: "days", k: ["history", "past workouts", "previous workouts", "old workouts", "what did i do", "last week", "workout log", "see workouts", "find workout"],
